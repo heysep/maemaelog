@@ -174,6 +174,126 @@ describe('parseTradeText — 증권앱 체결내역 패턴', () => {
     expect(p.symbol).not.toBe('현재가격');
   });
 
+  // ---------------------------------------------------------------------------
+  // 실물 토스증권 스크린샷을 해상도·압축률별로 재인코딩해 얻은 원시 OCR 텍스트(웹뷰 재압축 재현).
+  // 저품질에서 ① 금액 라벨 소실 ② 통화 글자 오독 ③ 날짜 구분자 소실이 동시에 발생한다.
+  // ---------------------------------------------------------------------------
+  describe('실물 토스증권 — 해상도/압축률 열화 3단계', () => {
+    const head = ['11:56 SM@ «                Ke il 9', '€                    현재가격 보기', '알파벳 A 구매', '구매 완료'];
+    const expected = { symbol: '알파벳 A', side: 'buy', qty: 1.071309, price: 473239, date: '2026-07-23', time: '23:18' };
+
+    it('2400px q0.92 / 2200px q0.8(양호): 라벨·날짜 모두 온전', () => {
+      const p = parseTradeText([...head, '구매 금액   506,985원', '수량   1.071309주', '주문 시간  2026.7.23 23:18'].join('\n'));
+      expect(p).toMatchObject(expected);
+    });
+
+    it('1600px q0.8: 날짜 구분자 1개 소실("2026.723")', () => {
+      const p = parseTradeText([...head, '2026.723 23:18', '구매 금액   506,985원', '적용 환율 1,484.59원', '수량   1.071309주'].join('\n'));
+      expect(p).toMatchObject(expected);
+    });
+
+    it('1080px q0.6(열화): 금액 라벨 소실 + "원"→"!" 오독 + 날짜 구분자 소실("20267.23")', () => {
+      const p = parseTradeText([...head, '20267.23 23:18', '506,985!', '$341.49', '수량   1.071309주'].join('\n'));
+      expect(p).toMatchObject(expected);
+      expect(p.confident.price).toBe(false); // 계산값
+    });
+
+    it('통화 글자가 "!"로 오독돼도 금액 라벨이 남아 있으면 단가를 계산한다', () => {
+      expect(parseTradeText('테슬라 구매\n구매 금액 1,152,300!\n수량 2.5주').price).toBe(460920);
+      expect(parseTradeText('테슬라 구매\n구매 금액 1,152,300|\n수량 2.5주').price).toBe(460920);
+    });
+
+    it('통화 글자가 없어도 금액 끝자리를 통화로 잡아먹지 않는다', () => {
+      // '1'·'l'을 통화 후보에 넣으면 506,981 → 50,698로 훼손된다
+      expect(parseTradeText('테슬라 구매\n금액 506,981\n수량 1주').price).toBe(506981);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 웹에서 수집한 실제 증권앱 스크린샷을 앱과 동일한 파이프라인
+  // (2200px 리사이즈 → tesseract kor+eng 로컬 자산)에 통과시켜 얻은 원시 OCR 텍스트 박제.
+  // ---------------------------------------------------------------------------
+  describe('실물 스크린샷 원시 OCR — 플랫폼별', () => {
+    it('키움 영웅문S# 거래내역(리스트형): 입출금·환전을 건너뛰고 최상단 매매 행 1건만', () => {
+      const raw = [
+        '<— 일별주문내역 | 거래내역 | 수익률현황  :',
+        '전체      OQ 2022.01.21 ~',
+        '  2023.01.20',
+        '거래일자   거래종류 거래단가/환율  거래금액 른',
+        '처리시간  적요명  거래수량  거래금액(외)',
+        '입출금    0',
+        '이체입금(지급결제)   0',
+        '환전  1,324.73  는',
+        '외화매수    0',
+        '매매  522.4500',
+        '매수    1    a |',
+        '매매            148.1600                             J',
+        '매수    1',
+        '코스닥              71465 4 1.76         0.25%',
+        ' 관심종목 put 주문 차트 계좌 -',
+      ].join('\n');
+      const p = parseTradeText(raw);
+      expect(p.price).toBe(522.45); // 두 번째 행 148.16이 아니라 최상단 매매 행
+      expect(p.qty).toBe(1);
+      expect(p.side).toBe('buy');
+      // 조회기간(2022.01.21 ~ 2023.01.20)은 체결일이 아니다 — 종목명 열도 화면에 없다
+      expect(p.date).toBeUndefined();
+      expect(p.confident.symbol).toBe(false);
+    });
+
+    it('"관심종목 put"을 종목명 라벨로 오인하지 않는다', () => {
+      const p = parseTradeText('관심종목 put 주문 차트 계좌\n수량 3주');
+      expect(p.confident.symbol).toBe(false);
+      expect(p.symbol).not.toBe('put');
+    });
+
+    it('조회기간 범위 날짜("A ~ B")는 체결일로 쓰지 않는다', () => {
+      expect(parseTradeText('조회기간 2022.01.21 ~ 2023.01.20').date).toBeUndefined();
+      // 범위 아래에 실제 행 날짜가 따로 있으면 그 값을 쓴다
+      expect(parseTradeText('2025/10/14 - 2025/10/14\n2025/10/14  54,550').date).toBe('2025-10-14');
+    });
+
+    it('KB증권 M-able 거래내역: 종목명 열이 없어 날짜만 확신', () => {
+      const raw = [
+        '<              거래내역',
+        '종합위탁 a 6985 amy v',
+        '전체 ~ 당일 ~            2025/10/14 - 2025/10/14',
+        '[매매 내역제외          예수금 자동저금통 내역제외',
+        '0 00000 거래금액 00 수스 eT',
+        '새는  정산금액    편드가입번호/신탁보수  oat',
+        '2025/10/14       0.00             :',
+        '54,550            60',
+        '2025/10/14          54,610',
+      ].join('\n');
+      const p = parseTradeText(raw);
+      expect(p.date).toBe('2025-10-14');
+      expect(p.confident.symbol).toBe(false);
+    });
+
+    it('나무증권 거래내역 엑셀 저장 행: 거래일자·거래유형(매수)', () => {
+      const raw = [
+        '1  일  | a     수량 |거래금액| 잔고 |이율 |수수료 |연체료 | 받는통장표시내용 |투자위험도| , .',
+        '> 0, rae | BAe | zs 단가 |정산금액|잔고금액|이자| 세금 |변제금| 거래내역메모 | 비고 | -',
+        '3 2021.10.25 매수',
+        '4 .0118489 |',
+      ].join('\n');
+      const p = parseTradeText(raw);
+      expect(p.date).toBe('2021-10-25');
+      expect(p.side).toBe('buy');
+      expect(p.confident.symbol).toBe(false); // 종목명 마스킹 — 표 헤더를 종목명으로 오인하지 않는다
+    });
+
+    it('토스증권 주문 확인 모달: 목적격 조사를 종목명에 붙이지 않는다', () => {
+      const raw = ['대한항공을 1주', '구매할게요', '1주 희망가격                   27,950 원', '총 주문금액                   27,950 원', '='].join('\n');
+      const p = parseTradeText(raw);
+      expect(p.symbol).toBe('대한항공'); // "대한항공을" 아님
+      expect(p.confident.symbol).toBe(true);
+      expect(p.side).toBe('buy');
+      expect(p.qty).toBe(1);
+      expect(p.price).toBe(27950);
+    });
+  });
+
   it('빈 문자열 안전', () => {
     const p = parseTradeText('');
     expect(p.confident).toEqual({ symbol: false, side: false, price: false, qty: false, date: false });
