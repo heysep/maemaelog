@@ -12,6 +12,8 @@ import {
 } from './core/journal';
 import { analyzeHabits, type HabitReport } from './core/insight';
 import { parseTradeText, type ParsedTrade } from './core/ocrParse';
+import { hasMissingCoreFields, mergeParsed } from './core/mergeParse';
+import { isAiParseAvailable, requestAiParse } from './api/parseTrade';
 import { buildStatsPayload } from './core/statsPayload';
 import { ANALYSIS_ENDPOINT, requestAiAnalysis, type AiReport } from './api/analysis';
 import {
@@ -78,6 +80,8 @@ export function App() {
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrError, setOcrError] = useState<OcrError | null>(null);
   const [ocrRawText, setOcrRawText] = useState('');
+  const [aiFilled, setAiFilled] = useState<string[]>([]);
+  const [aiHint, setAiHint] = useState(false);
   const [copied, setCopied] = useState(false);
   const [parsedPreview, setParsedPreview] = useState<ParsedTrade | null>(null);
 
@@ -260,7 +264,22 @@ export function App() {
       return;
     }
     setOcrRawText(result.text);
-    const parsed = parseTradeText(result.text);
+    setAiFilled([]);
+    setAiHint(false);
+    // 1) 항상 로컬 규칙 파서 먼저 (오프라인·무료·비전송)
+    let parsed = parseTradeText(result.text);
+    // 2) 핵심 필드가 비었고 프로 구독 중이면 서버(AI 정밀 인식)로 빈 칸만 보강
+    const isPro = isActive(ent, 'pro', new Date());
+    if (hasMissingCoreFields(parsed)) {
+      if (isPro && isAiParseAvailable()) {
+        const server = await requestAiParse(result.text, authConnected);
+        const { merged, filledByAi } = mergeParsed(parsed, server);
+        parsed = merged;
+        setAiFilled(filledByAi);
+      } else if (!isPro) {
+        setAiHint(true); // 무료 사용자: 빈 칸이 있을 때만 한 줄 안내
+      }
+    }
     if (parsed.symbol !== undefined) setSymbol(parsed.symbol);
     if (parsed.side !== undefined) setSide(parsed.side);
     if (parsed.price !== undefined) setPrice(String(parsed.price));
@@ -544,7 +563,10 @@ export function App() {
             )}
             {ocrState === 'done' && parsedPreview !== null && (
               <div className="gate-sheet ocr-confirm">
-                <p className="ocr-status">자동으로 채웠어요</p>
+                <p className="ocr-status">
+                  자동으로 채웠어요
+                  {aiFilled.length > 0 && <span className="badge ai-badge">AI 정밀 인식</span>}
+                </p>
                 <div className="ocr-preview">
                   <span>종목 <strong>{parsedPreview.symbol ?? '—'}</strong></span>
                   <span>구분 <strong>{parsedPreview.side === 'buy' ? '매수' : parsedPreview.side === 'sell' ? '매도' : '—'}</strong></span>
@@ -553,6 +575,15 @@ export function App() {
                   <span>날짜 <strong>{parsedPreview.date ?? date}</strong></span>
                 </div>
                 <button className="btn-primary" disabled={!isEffValid(effFromPreview(parsedPreview))} onClick={quickAdd}>바로 입력하기</button>
+                {aiHint && (
+                  <p className="ocr-note">
+                    프로를 쓰면 못 읽은 항목도 AI가 채워드려요.{' '}
+                    <button className="inline-link" onClick={() => setTab('me')}>이용권 보기</button>
+                  </p>
+                )}
+                {aiFilled.length > 0 && (
+                  <p className="ocr-note">스크린샷 이미지는 보내지 않고, 기기에서 인식한 텍스트만 사용해요.</p>
+                )}
                 <button className="raw-copy" onClick={() => void copyRawText()}>
                   {copied ? '복사됨' : '인식 원문 복사'}
                 </button>
@@ -871,6 +902,7 @@ export function App() {
             {iapNotice !== '' && <p className="ocr-note">{iapNotice}</p>}
             <p className="ocr-note">
               무료로는 기록 {FREE_RECORD_LIMIT}건, 습관 분석 하루 1회까지 쓸 수 있어요. 이용권 상태는 이 기기에만 저장돼요.
+              AI 정밀 인식과 습관 분석은 스크린샷 이미지가 아니라 기기에서 인식한 텍스트·익명 통계만 사용해요.
             </p>
           </section>
 

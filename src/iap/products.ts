@@ -11,7 +11,7 @@ export const PRODUCTS: Product[] = [
     sku: 'maemaelog.pro.monthly',
     name: '프로',
     priceLabel: '월 3,000원',
-    desc: '습관 분석 하루 3회 + 기록 무제한 + 광고 제거 올인원',
+    desc: 'AI 정밀 인식 + 습관 분석 하루 3회 + 기록 무제한 + 광고 제거',
   },
   {
     sku: 'maemaelog.records.monthly',

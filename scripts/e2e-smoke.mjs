@@ -13,7 +13,7 @@ const ok = (c, l) => { if (!c) throw new Error('FAIL: ' + l); passed++; console.
 const { spawnSync } = await import('node:child_process');
 const build = spawnSync('npx', ['vite', 'build'], {
   shell: true, stdio: 'ignore',
-  env: { ...process.env, VITE_ANALYSIS_ENDPOINT: '', VITE_AD_GROUP_ID: '', VITE_REWARDED_AD_ID: '' },
+  env: { ...process.env, VITE_ANALYSIS_ENDPOINT: '', VITE_PARSE_ENDPOINT: '', VITE_AD_GROUP_ID: '', VITE_REWARDED_AD_ID: '' },
 });
 if (build.status !== 0) { console.error('vite build 실패'); process.exit(1); }
 
@@ -218,7 +218,8 @@ try {
   ok(vals.qty === '10', `오프라인 OCR 수량 자동 채움 (${vals.qty})`);
   ok(vals.date === '2026-07-23', `오프라인 OCR 날짜 자동 채움 (${vals.date})`);
   ok(vals.sideOn.includes('매수'), `오프라인 OCR 구분 자동 선택 (${vals.sideOn})`);
-  ok(externalReqs.length === 0, '외부 네트워크 요청 0건' + (externalReqs.length ? ' — ' + externalReqs[0] : ''));
+  ok(externalReqs.length === 0, '외부 네트워크 요청 0건(무료 티어는 AI 파싱 서버 미호출)' + (externalReqs.length ? ' — ' + externalReqs[0] : ''));
+  ok(!(await page2.evaluate(() => document.body.innerText)).includes('AI 정밀 인식'), '로컬 파싱만 성공 시 AI 배지 없음');
   // "바로 입력하기" 한 번으로 저장 완료 — 단가 포함 전 필드가 기록에 반영되는지
   await page2.evaluate(() => { [...document.querySelectorAll('button')].find((b) => b.innerText.trim() === '바로 입력하기')?.click(); });
   await wait(300);
