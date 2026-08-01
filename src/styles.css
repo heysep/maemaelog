@@ -59,6 +59,14 @@ input, select, textarea { font-family: inherit; }
   background: #fbfcfe; color: var(--text); outline: none; width: 100%;
 }
 .field-input:focus { border-color: var(--accent); }
+/* 네이티브 date/time 입력은 고유 최소폭이 커서 iOS 웹뷰에서 컨테이너를 넘친다 */
+.field { min-width: 0; }
+input.field-input[type='date'],
+input.field-input[type='time'] {
+  min-width: 0; max-width: 100%; display: block;
+  -webkit-appearance: none; appearance: none;
+}
+.field-input::-webkit-date-and-time-value { text-align: left; }
 .field-input.picking { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(49, 130, 246, 0.15); }
 .field-input::-webkit-calendar-picker-indicator { opacity: 0.5; }
 textarea.field-input { resize: vertical; min-height: 64px; }
