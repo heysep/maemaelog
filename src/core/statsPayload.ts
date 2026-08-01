@@ -6,6 +6,8 @@
  */
 import { computeStats, isValidTrade, sortForCalc, type Trade } from './journal';
 import { analyzeHabits } from './insight';
+import { buildRoundTrips, computeRoundTripStats, computeRStats, entryEmotionPerf, exitEmotionPerf } from './roundTrip';
+import { ZERO_FEES, type FeeRates } from './fees';
 
 export interface AnalysisStats {
   totalTrades: number;
@@ -16,6 +18,21 @@ export interface AnalysisStats {
   reentryWithin1d?: number; // 손실 매도 후 1일 내 같은 종목 재매수 횟수
   avgHoldDays?: number;
   monthly?: Array<{ month: string; pnl: number }>;
+  /** 라운드트립(진입~청산) 기준 지표 — 매도 건수가 아니라 매매 1건 기준 */
+  roundTrips?: {
+    closed: number;
+    open: number;
+    winRate: number | null;
+    payoffRatio: number | null;
+    profitFactor: number | null;
+    avgHoldDays: number | null;
+    avgR: number | null;
+    rCount: number;
+  };
+  /** 살 때 감정별 성과(라운드트립 손익을 첫 진입 감정에 귀속) */
+  byEntryEmotion?: Array<{ tag: string; trips: number; winRate: number; pnl: number }>;
+  /** 팔 때 감정별 성과 */
+  byExitEmotion?: Array<{ tag: string; trips: number; winRate: number; pnl: number }>;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -24,9 +41,12 @@ function dayDiff(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS);
 }
 
-export function buildStatsPayload(input: Trade[]): AnalysisStats {
+export function buildStatsPayload(input: Trade[], rates: FeeRates = ZERO_FEES): AnalysisStats {
   const trades = sortForCalc(input.filter(isValidTrade));
-  const stats = computeStats(trades);
+  const stats = computeStats(trades, rates);
+  const rts = buildRoundTrips(trades, rates);
+  const rtStats = computeRoundTripStats(rts);
+  const rStats = computeRStats(rts);
   const habits = analyzeHabits(trades);
 
   const byEmotion = habits.emotionStats.map((e) => ({
@@ -65,6 +85,18 @@ export function buildStatsPayload(input: Trade[]): AnalysisStats {
     byEmotion,
     reentryWithin1d,
     monthly: stats.byMonth.map((m) => ({ month: m.month, pnl: m.realized })),
+    roundTrips: {
+      closed: rtStats.closedCount,
+      open: rtStats.openCount,
+      winRate: rtStats.winRate,
+      payoffRatio: rtStats.payoffRatio,
+      profitFactor: rtStats.profitFactor,
+      avgHoldDays: rtStats.avgHoldDays,
+      avgR: rStats.avgR,
+      rCount: rStats.count,
+    },
+    byEntryEmotion: entryEmotionPerf(rts).map((e) => ({ tag: e.emotion, trips: e.trips, winRate: e.winRate, pnl: e.realized })),
+    byExitEmotion: exitEmotionPerf(rts).map((e) => ({ tag: e.emotion, trips: e.trips, winRate: e.winRate, pnl: e.realized })),
   };
   if (habits.buyCount > 0) out.chaseRatio = Math.round((habits.chaseBuyCount / habits.buyCount) * 100);
   if (holdSpans.length > 0) {

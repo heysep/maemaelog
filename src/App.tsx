@@ -29,7 +29,17 @@ import {
 import { wipeAllData } from './core/wipe';
 import { isLoginSupported, loadAuthConnected, loginWithToss, logout } from './auth/tossLogin';
 import { decideOcrGate, passAfterAd } from './core/ocrGate';
-import { loadTrades, saveTrades } from './core/storage';
+import { loadFeeRates, loadTrades, saveFeeRates, saveTrades } from './core/storage';
+import { EXAMPLE_FEES, feesEnabled, ZERO_FEES, type FeeRates } from './core/fees';
+import {
+  buildRoundTrips,
+  computeRoundTripStats,
+  computeRStats,
+  entryEmotionPerf,
+  exitEmotionPerf,
+  MIN_R_TRIPS,
+  MIN_RATIO_TRIPS,
+} from './core/roundTrip';
 import {
   grantEntitlement,
   loadAiParseUsage,
@@ -51,6 +61,11 @@ import { EmotionIcon, IconCamera, IconChart, IconHome, IconInfo, IconList, IconP
 type Tab = 'home' | 'write' | 'stats' | 'me';
 type OcrState = 'idle' | 'gate' | 'ad' | 'running' | 'done' | 'failed';
 
+function daysSince(date: string): number {
+  const ms = Date.now() - Date.parse(`${date}T00:00:00`);
+  return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86_400_000)) : 0;
+}
+
 function todayStr(): string {
   const d = new Date();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -61,6 +76,7 @@ function todayStr(): string {
 export function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [trades, setTrades] = useState<Trade[]>(() => loadTrades());
+  const [feeRates, setFeeRates] = useState<FeeRates>(() => loadFeeRates());
   const [ent, setEnt] = useState<Entitlements>(() => loadEntitlements());
 
   // ---- 입력 폼 상태 ----
@@ -72,6 +88,7 @@ export function App() {
   const [time, setTime] = useState('');
   const [memo, setMemo] = useState('');
   const [emotion, setEmotion] = useState('');
+  const [stopPrice, setStopPrice] = useState('');
   const [thumb, setThumb] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
 
@@ -117,7 +134,14 @@ export function App() {
 
   const now = new Date();
   const todayKey = todayStr();
-  const stats = useMemo(() => computeStats(trades), [trades]);
+  const stats = useMemo(() => computeStats(trades, feeRates), [trades, feeRates]);
+  const roundTrips = useMemo(() => buildRoundTrips(trades, feeRates), [trades, feeRates]);
+  const rtStats = useMemo(() => computeRoundTripStats(roundTrips), [roundTrips]);
+  const rStats = useMemo(() => computeRStats(roundTrips), [roundTrips]);
+  const entryPerf = useMemo(() => entryEmotionPerf(roundTrips), [roundTrips]);
+  const exitPerf = useMemo(() => exitEmotionPerf(roundTrips), [roundTrips]);
+  const openPositions = useMemo(() => roundTrips.filter((r) => r.open), [roundTrips]);
+  const feesOn = feesEnabled(feeRates);
   const symbols = useMemo(() => [...new Set(trades.map((t) => t.symbol))].sort(), [trades]);
   const noAds = adsRemoved(ent, now);
   const insightLeft = remainingInsights(loadInsightCounter(), ent, now, todayKey);
@@ -135,6 +159,7 @@ export function App() {
     void ensureIapModule().then(() => setIapAvailable(isIapSupported()));
   }, []);
 
+  const stopNum = Number(stopPrice);
   const priceNum = Number(price);
   const qtyNum = Number(qty);
   const canSave =
@@ -151,7 +176,7 @@ export function App() {
 
   const resetForm = () => {
     setSymbol(''); setPrice(''); setQty(''); setMemo(''); setEmotion(''); setTime('');
-    setThumb(null); setImageFile(null); setOcrState('idle'); setOcrProgress(0); setParsedPreview(null);
+    setStopPrice(''); setThumb(null); setImageFile(null); setOcrState('idle'); setOcrProgress(0); setParsedPreview(null);
     setDate(todayStr());
     if (fileRef.current) fileRef.current.value = '';
   };
@@ -190,6 +215,7 @@ export function App() {
       ...(e.time !== '' ? { time: e.time } : {}),
       memo: memo.trim(),
       emotion,
+      ...(e.side === 'buy' && stopNum > 0 ? { stopPrice: Math.round(stopNum) } : {}),
       ...(thumb ? { thumb } : {}),
     };
     persist([...trades, t]);
@@ -197,6 +223,12 @@ export function App() {
     setReport(null);
     setAiReport(null);
     setTab('home');
+  };
+
+  /** 요율 변경 — 기록은 그대로, 통계만 즉시 재계산 */
+  const updateFees = (next: FeeRates) => {
+    setFeeRates(next);
+    saveFeeRates(next);
   };
 
   const addTrade = () => saveTrade(effFromState());
@@ -327,7 +359,7 @@ export function App() {
     const tier: 'free' | 'pro' = isActive(ent, 'pro', new Date()) ? 'pro' : 'free';
     if (ANALYSIS_ENDPOINT !== '') {
       setAnalyzing(true);
-      const r = await requestAiAnalysis(buildStatsPayload(trades), { authConnected, tier });
+      const r = await requestAiAnalysis(buildStatsPayload(trades, feeRates), { authConnected, tier });
       setAnalyzing(false);
       if (r.status === 'ok') {
         // 서버 used/limit을 로컬 카운터에 동기화(내정보 이용 현황 반영)
@@ -656,6 +688,30 @@ export function App() {
             </div>
           </div>
 
+          {side === 'buy' && (
+            <div className="field">
+              <label className="field-label" htmlFor="f-stop">손절가 (선택)</label>
+              <input
+                id="f-stop"
+                className="field-input"
+                inputMode="numeric"
+                value={stopPrice}
+                onChange={(e) => setStopPrice(e.target.value.replace(/[^\d]/g, ''))}
+                placeholder="여기까지 빠지면 판다 (R 계산에 쓰여요)"
+              />
+              {stopNum > 0 && Number.isFinite(priceNum) && priceNum > 0 && Number.isFinite(qtyNum) && qtyNum > 0 && (
+                stopNum < priceNum ? (
+                  <p className="risk-preview">
+                    이 매매의 위험액 <strong>{formatWon(Math.round((priceNum - stopNum) * qtyNum))}</strong>
+                    <span className="risk-formula"> (단가−손절가)×수량</span>
+                  </p>
+                ) : (
+                  <p className="notice">손절가는 매수가보다 낮아야 해요.</p>
+                )
+              )}
+            </div>
+          )}
+
           <div className="row2">
             <div className="field">
               <label className="field-label" htmlFor="f-date">매매 날짜</label>
@@ -715,18 +771,90 @@ export function App() {
                 {formatSigned(stats.totalRealized)}
               </span>
             </div>
+            <p className="fee-state">{feesOn ? '수수료·세금 반영' : '수수료·세금 미반영'}</p>
             <div className="grid2">
               <div className="mini-card">
                 <span className="mini-label">승률</span>
-                <span className="mini-value">{stats.winRate === null ? '—' : `${stats.winRate}%`}</span>
-                <span className="stat-sub">{stats.sellCount}번 매도 중 {stats.winCount}번 이익</span>
+                <span className="mini-value">{rtStats.winRate === null ? '—' : `${rtStats.winRate}%`}</span>
+                <span className="stat-sub">매매 {rtStats.closedCount}건 중 {rtStats.winCount}건 이익</span>
               </div>
+              <div className="mini-card">
+                <span className="mini-label">평균 보유</span>
+                <span className="mini-value">{rtStats.avgHoldDays === null ? '—' : `${rtStats.avgHoldDays}일`}</span>
+                <span className="stat-sub">진행 중 {rtStats.openCount}건</span>
+              </div>
+            </div>
+
+            {rtStats.closedCount >= MIN_RATIO_TRIPS && (
+              <>
+                <div className="grid2">
+                  <div className="mini-card">
+                    <span className="mini-label">손익비</span>
+                    <span className="mini-value">
+                      {rtStats.payoffRatio === null ? '—' : `${rtStats.payoffRatio} : 1`}
+                    </span>
+                    <span className="stat-sub">평균이익 ÷ 평균손실</span>
+                  </div>
+                  <div className="mini-card">
+                    <span className="mini-label">Profit Factor</span>
+                    <span className="mini-value">{rtStats.profitFactor === null ? '—' : rtStats.profitFactor}</span>
+                    <span className="stat-sub">총이익 ÷ 총손실</span>
+                  </div>
+                </div>
+                <p className="ocr-note">승률이 높아도 손익비가 1 미만이면 결국 잃어요. 두 숫자를 같이 보세요.</p>
+              </>
+            )}
+
+            {rStats.count >= MIN_R_TRIPS && (
+              <div>
+                <h3 className="field-label">R 지표 · 손절가를 적은 {rStats.count}건 기준</h3>
+                <div className="grid2">
+                  <div className="mini-card">
+                    <span className="mini-label">평균 R (기대값)</span>
+                    <span className="mini-value">{rStats.avgR === null ? '—' : `${rStats.avgR > 0 ? '+' : ''}${rStats.avgR}R`}</span>
+                    <span className="stat-sub">1회 매매의 기대 성과</span>
+                  </div>
+                  <div className="mini-card">
+                    <span className="mini-label">최고 · 최저 R</span>
+                    <span className="mini-value">
+                      {rStats.bestR === null ? '—' : `${rStats.bestR > 0 ? '+' : ''}${rStats.bestR}R`}
+                    </span>
+                    <span className="stat-sub">최저 {rStats.worstR === null ? '—' : `${rStats.worstR}R`}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid2">
               <div className="mini-card">
                 <span className="mini-label">기록 수</span>
                 <span className="mini-value">{trades.length}건</span>
                 <span className="stat-sub">종목 {symbols.length}개</span>
               </div>
+              <div className="mini-card">
+                <span className="mini-label">매매 건수</span>
+                <span className="mini-value">{rtStats.closedCount}건</span>
+                <span className="stat-sub">진입~청산 1건 기준</span>
+              </div>
             </div>
+
+            {openPositions.length > 0 && (
+              <div>
+                <h3 className="field-label">보유 중</h3>
+                {openPositions.map((r) => (
+                  <div key={`${r.symbol}-${r.entryDate}`} className="stat-row">
+                    <div style={{ minWidth: 0 }}>
+                      <p className="stat-name">{r.symbol}</p>
+                      <p className="stat-sub">
+                        {formatQty(r.openQty)}주 · 평단 {formatWon(r.avgEntry)} · {daysSince(r.entryDate)}일째
+                      </p>
+                    </div>
+                    <span className="stat-val">{formatWon(Math.round(r.avgEntry * r.openQty))}</span>
+                  </div>
+                ))}
+                <p className="ocr-note">매수원금 기준이에요. 평가손익은 시세를 쓰지 않아 표시하지 않아요.</p>
+              </div>
+            )}
 
             <div>
               <h3 className="field-label">종목별 실현손익 순위</h3>
@@ -808,22 +936,35 @@ export function App() {
                     <p key={p} className="rx">{p}</p>
                   ))}
                 </div>
-                {report.emotionStats.length > 0 && (
+                {(entryPerf.length > 0 || exitPerf.length > 0) && (
                   <div>
-                    <h3 className="field-label">감정 태그별 성과</h3>
-                    {report.emotionStats.map((e) => (
-                      <div key={e.emotion} className="stat-row">
+                    <h3 className="field-label">살 때 감정 · 매매 결과</h3>
+                    {entryPerf.length === 0 && <p className="empty">청산된 매매가 생기면 보여요.</p>}
+                    {entryPerf.map((e) => (
+                      <div key={`in-${e.emotion}`} className="stat-row">
                         <div style={{ minWidth: 0 }}>
-                          <p className="stat-name">{e.emotion}</p>
-                          <p className="stat-sub">
-                            {e.count}건{e.sellCount > 0 ? ` · 매도 승률 ${Math.round((e.winCount / e.sellCount) * 100)}%` : ''}
-                          </p>
+                          <p className="stat-name"><EmotionIcon emotion={e.emotion} size={14} />{e.emotion}</p>
+                          <p className="stat-sub">{e.trips}건 · 승률 {e.winRate}%</p>
                         </div>
                         <span className={`stat-val ${e.realized > 0 ? 'up-txt' : e.realized < 0 ? 'down-txt' : ''}`}>
-                          {e.sellCount > 0 ? formatSigned(e.realized) : '—'}
+                          {formatSigned(e.realized)}
                         </span>
                       </div>
                     ))}
+                    <h3 className="field-label" style={{ marginTop: 14 }}>팔 때 감정 · 매매 결과</h3>
+                    {exitPerf.length === 0 && <p className="empty">청산된 매매가 생기면 보여요.</p>}
+                    {exitPerf.map((e) => (
+                      <div key={`out-${e.emotion}`} className="stat-row">
+                        <div style={{ minWidth: 0 }}>
+                          <p className="stat-name"><EmotionIcon emotion={e.emotion} size={14} />{e.emotion}</p>
+                          <p className="stat-sub">{e.trips}건 · 승률 {e.winRate}%</p>
+                        </div>
+                        <span className={`stat-val ${e.realized > 0 ? 'up-txt' : e.realized < 0 ? 'down-txt' : ''}`}>
+                          {formatSigned(e.realized)}
+                        </span>
+                      </div>
+                    ))}
+                    <p className="ocr-note">라운드트립(진입~청산) 손익을 살 때 감정과 팔 때 감정에 각각 귀속해 봤어요.</p>
                   </div>
                 )}
                 <div className="grid2">
@@ -899,6 +1040,39 @@ export function App() {
                 <span className="stat-sub">{ocrReady ? '바로 쓸 수 있어요' : '영상 광고 1회 시청'}</span>
               </div>
             </div>
+          </section>
+
+          <section className="panel">
+            <h2 className="panel-title"><IconList size={18} />수수료·세금</h2>
+            <div className="row2">
+              <div className="field">
+                <label className="field-label" htmlFor="f-comm">매매 수수료율(%)</label>
+                <input
+                  id="f-comm"
+                  className="field-input"
+                  inputMode="decimal"
+                  value={feeRates.commissionPct === 0 ? '' : String(feeRates.commissionPct)}
+                  placeholder={`예: ${EXAMPLE_FEES.commissionPct}`}
+                  onChange={(e) => updateFees({ ...feeRates, commissionPct: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 })}
+                />
+              </div>
+              <div className="field">
+                <label className="field-label" htmlFor="f-tax">매도 세율(%)</label>
+                <input
+                  id="f-tax"
+                  className="field-input"
+                  inputMode="decimal"
+                  value={feeRates.sellTaxPct === 0 ? '' : String(feeRates.sellTaxPct)}
+                  placeholder={`예: ${EXAMPLE_FEES.sellTaxPct}`}
+                  onChange={(e) => updateFees({ ...feeRates, sellTaxPct: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 })}
+                />
+              </div>
+            </div>
+            <p className="ocr-note">
+              증권사 앱에서 내 수수료율과 세율을 확인해 입력하면 실제 손에 쥐는 금액으로 계산해 드려요.
+              비워 두면 수수료·세금을 반영하지 않아요. 저장된 기록은 그대로 두고 통계만 다시 계산해요.
+            </p>
+            {feesOn && <button className="btn-ghost" onClick={() => updateFees(ZERO_FEES)}>비우기(미반영으로)</button>}
           </section>
 
           <section className="panel">

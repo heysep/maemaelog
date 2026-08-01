@@ -8,6 +8,8 @@
  * - 거래 순서는 날짜 오름차순, 같은 날짜는 입력 순서.
  */
 
+import { buyCost, sellProceeds, ZERO_FEES, type FeeRates } from './fees';
+
 export type Side = 'buy' | 'sell';
 
 export interface Trade {
@@ -25,6 +27,8 @@ export interface Trade {
   memo: string;
   /** 감정 태그 */
   emotion: string;
+  /** 손절가(선택, 매수 기록에만). R-multiple 계산에 쓰이며 없어도 동작한다 */
+  stopPrice?: number;
   /** 512px 축소 썸네일 dataURL (선택) */
   thumb?: string;
 }
@@ -73,7 +77,7 @@ export function sortForCalc(trades: Trade[]): Trade[] {
     .map(([t]) => t);
 }
 
-export function computeStats(trades: Trade[]): JournalStats {
+export function computeStats(trades: Trade[], rates: FeeRates = ZERO_FEES): JournalStats {
   const ordered = sortForCalc(trades.filter(isValidTrade));
   const map = new Map<string, { qty: number; cost: number; stat: SymbolStat }>();
   const monthMap = new Map<string, { realized: number; costBasis: number }>();
@@ -87,12 +91,12 @@ export function computeStats(trades: Trade[]): JournalStats {
     }
     if (t.side === 'buy') {
       p.qty += t.qty;
-      p.cost += t.price * t.qty;
+      p.cost += buyCost(t.price, t.qty, rates);
     } else {
       const sellQty = Math.min(t.qty, p.qty);
       if (sellQty <= 0) continue; // 보유 없는 매도 — 손익 계산 불가, 건너뜀
-      const avg = p.cost / p.qty;
-      const pnl = Math.round((t.price - avg) * sellQty);
+      const avg = p.cost / p.qty; // 수수료 포함 평균단가
+      const pnl = Math.round(sellProceeds(t.price, sellQty, rates) - avg * sellQty);
       pnlByTradeId[t.id] = pnl;
       p.stat.realized += pnl;
       p.stat.sellCount += 1;

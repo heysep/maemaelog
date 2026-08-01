@@ -136,6 +136,55 @@ try {
   const after = await text(page);
   ok(after.includes('삼성전자') && after.includes('테스트종목'), '리로드 후 기록 유지');
 
+  // ---- 손절가 위험액 미리보기 (매수 폼 전용) ----
+  await clickTab(page, '입력'); await wait(200);
+  await setInput(page, '#f-price', '10000');
+  await setInput(page, '#f-qty', '10');
+  await setInput(page, '#f-stop', '9000');
+  await wait(150);
+  ok((await text(page)).includes('위험액'), '손절가 입력 시 위험액 미리보기');
+  ok((await text(page)).includes('10,000원'), '위험액 계산값 (10000-9000)×10');
+  await setInput(page, '#f-stop', '11000'); await wait(150);
+  ok((await text(page)).includes('손절가는 매수가보다 낮아야 해요'), '손절가 > 매수가 안내');
+  await page.evaluate(() => { [...document.querySelectorAll('.seg-btn')].find((b) => b.innerText === '매도')?.click(); });
+  await wait(150);
+  ok(await page.$('#f-stop') === null, '매도 폼에는 손절가 필드 없음');
+  await page.evaluate(() => { [...document.querySelectorAll('.seg-btn')].find((b) => b.innerText === '매수')?.click(); });
+  await wait(100);
+
+  // ---- 분할 매도가 승률을 부풀리지 않는다 (라운드트립 1건 기준) ----
+  await page.evaluate(() => {
+    localStorage.setItem('maemaelog.trades', JSON.stringify([
+      { id: 's1', symbol: '분할테스트', side: 'buy', price: 10000, qty: 10, date: '2026-08-01', memo: '', emotion: '' },
+      { id: 's2', symbol: '분할테스트', side: 'sell', price: 12000, qty: 5, date: '2026-08-01', memo: '', emotion: '' },
+      { id: 's3', symbol: '분할테스트', side: 'sell', price: 4000, qty: 5, date: '2026-08-01', memo: '', emotion: '' },
+    ]));
+  });
+  await page.reload({ waitUntil: 'networkidle0' }); await wait(300);
+  await clickTab(page, '통계'); await wait(250);
+  {
+    const st = await text(page);
+    // 매도 2건 중 1건 이익이지만 라운드트립 1건(총 -20,000원)이므로 승률 0%
+    ok(st.includes('매매 1건 중 0건 이익'), '분할 매도 → 라운드트립 1건 집계');
+    ok(!st.includes('50%') && !st.includes('100%'), '분할 매도가 승률을 부풀리지 않음');
+    ok(st.includes('수수료·세금 미반영'), '요율 0일 때 미반영 배지');
+    ok(st.includes('-20,000원'), '요율 0 실현손익 -20,000원');
+  }
+  // 요율 변경 → 통계 즉시 재계산
+  await clickTab(page, '내정보'); await wait(200);
+  await setInput(page, '#f-comm', '0.015');
+  await setInput(page, '#f-tax', '0.18'); await wait(200);
+  await clickTab(page, '통계'); await wait(250);
+  {
+    const st = await text(page);
+    ok(st.includes('수수료·세금 반영'), '요율 입력 시 반영 배지로 전환');
+    ok(!st.includes('-20,000원'), '요율 반영으로 실현손익 재계산됨');
+  }
+  await clickTab(page, '내정보'); await wait(200);
+  await clickBtn(page, '비우기(미반영으로)'); await wait(200);
+  await clickTab(page, '통계'); await wait(250);
+  ok((await text(page)).includes('-20,000원'), '요율 비우면 원래 값으로 복귀');
+
   // ---- 내정보 탭: 미지원 환경 안내 + 이용 현황 ----
   await clickTab(page, '내정보'); await wait(200);
   const me = await text(page);

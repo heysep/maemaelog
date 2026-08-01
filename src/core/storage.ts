@@ -34,3 +34,26 @@ export function saveTrades(trades: Trade[]): boolean {
     }
   }
 }
+
+/** 수수료·세금 요율 저장 (maemaelog.fees.v1) — 기록은 건드리지 않고 계산 시점에만 적용 */
+import { DEFAULT_FEES, normalizeRates, type FeeRates } from './fees';
+
+const FEES_KEY = `${STORAGE_PREFIX}fees.v1`;
+
+export function loadFeeRates(): FeeRates {
+  try {
+    const raw = localStorage.getItem(FEES_KEY);
+    if (raw === null) return DEFAULT_FEES;
+    return normalizeRates(JSON.parse(raw));
+  } catch {
+    return DEFAULT_FEES;
+  }
+}
+
+export function saveFeeRates(rates: FeeRates): void {
+  try {
+    localStorage.setItem(FEES_KEY, JSON.stringify(normalizeRates(rates)));
+  } catch {
+    // 무시 — 다음 실행에서 기본값
+  }
+}
