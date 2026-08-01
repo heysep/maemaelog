@@ -251,7 +251,8 @@ export function parseTradeText(rawText: string): ParsedTrade {
   // 1순위: "종목명 XXX" 라벨. 앞에 한글이 붙은 "관심종목/보유종목/인기종목"은 라벨이 아니다.
   const labeled = result.symbol === undefined
     // "종목순위"처럼 뒤에 한글이 바로 붙는 합성어는 라벨이 아니다 — 구분자(공백/콜론)를 요구한다.
-    ? /(?<![가-힣])종목(?:명\s*[:\s]*|\s*[:\s]\s*)([가-힣A-Za-z0-9&]{2,15})/.exec(text)
+    // (구형 WebView에서 파스 에러를 내는 lookbehind 대신 문자 클래스 사용)
+    ? /(?:^|[^가-힣])종목(?:명\s*[:\s]*|\s*[:\s]\s*)([가-힣A-Za-z0-9&]{2,15})/.exec(text)
     : null;
   // 2순위: 토스증권형 제목 "{이름} 구매|판매( 완료)?" — "알파벳 A"처럼 공백 포함 이름 허용
   let titleSymbol: string | undefined;
