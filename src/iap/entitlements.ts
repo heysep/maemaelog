@@ -65,6 +65,38 @@ export function saveInsightCounter(counter: InsightCounter): void {
   }
 }
 
+/** AI 정밀 인식 사용량(서버 응답 used/limit 동기화용) */
+export interface AiParseUsage {
+  date: string;
+  used: number;
+  limit: number;
+}
+
+const AI_PARSE_KEY = `${STORAGE_PREFIX}aiParse.uses`;
+
+export function loadAiParseUsage(): AiParseUsage | null {
+  try {
+    const raw = localStorage.getItem(AI_PARSE_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const x = parsed as Record<string, unknown>;
+    if (typeof x.date !== 'string' || typeof x.used !== 'number' || typeof x.limit !== 'number') return null;
+    if (!Number.isFinite(x.used) || !Number.isFinite(x.limit)) return null;
+    return { date: x.date, used: x.used, limit: x.limit };
+  } catch {
+    return null;
+  }
+}
+
+export function saveAiParseUsage(usage: AiParseUsage): void {
+  try {
+    localStorage.setItem(AI_PARSE_KEY, JSON.stringify(usage));
+  } catch {
+    // 무시 — 표시용 값이라 실패해도 기능에 지장 없음
+  }
+}
+
 export function loadOcrPass(): string | null {
   try {
     return localStorage.getItem(OCR_PASS_KEY);

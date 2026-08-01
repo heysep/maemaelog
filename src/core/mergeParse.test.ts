@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { hasMissingCoreFields, mergeParsed } from './mergeParse';
+import { PARSE_LIMIT } from '../api/parseTrade';
 import type { ParsedTrade } from './ocrParse';
 
 type LocalInput = Omit<Partial<ParsedTrade>, 'confident'> & { confident?: Partial<ParsedTrade['confident']> };
@@ -88,5 +89,26 @@ describe('mergeParsed', () => {
   it('단가는 원 단위 정수로 반올림한다', () => {
     const { merged } = mergeParsed(local(), { price: 469733.6 });
     expect(merged.price).toBe(469734);
+  });
+});
+
+describe('AI 정밀 인식 티어·한도 정책', () => {
+  it('티어별 일일 한도 기본값: 무료 1회 / 프로 20회', () => {
+    expect(PARSE_LIMIT.free).toBe(1);
+    expect(PARSE_LIMIT.pro).toBe(20);
+  });
+
+  it('429(daily_limit)면 로컬 결과를 그대로 유지한다(서버 값 미반영)', () => {
+    // 429는 parsed를 주지 않으므로 병합 대상이 null — 로컬 결과 보존이 계약
+    const l = local({ symbol: '알파벳 A', qty: 1, confident: { symbol: true, qty: true } });
+    const { merged, filledByAi } = mergeParsed(l, null);
+    expect(merged.symbol).toBe('알파벳 A');
+    expect(merged.price).toBeUndefined();
+    expect(filledByAi).toEqual([]);
+  });
+
+  it('핵심 필드가 모두 차 있으면 서버를 호출하지 않는다(무료·프로 공통, 비용 절약)', () => {
+    const full = local({ symbol: 'A', price: 100, qty: 1, date: '2026-07-24' });
+    expect(hasMissingCoreFields(full)).toBe(false);
   });
 });

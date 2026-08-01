@@ -13,7 +13,7 @@ import {
 import { analyzeHabits, type HabitReport } from './core/insight';
 import { parseTradeText, type ParsedTrade } from './core/ocrParse';
 import { hasMissingCoreFields, mergeParsed } from './core/mergeParse';
-import { isAiParseAvailable, requestAiParse } from './api/parseTrade';
+import { isAiParseAvailable, PARSE_LIMIT, requestAiParse, type ParseTier } from './api/parseTrade';
 import { buildStatsPayload } from './core/statsPayload';
 import { ANALYSIS_ENDPOINT, requestAiAnalysis, type AiReport } from './api/analysis';
 import {
@@ -32,7 +32,9 @@ import { decideOcrGate, passAfterAd } from './core/ocrGate';
 import { loadTrades, saveTrades } from './core/storage';
 import {
   grantEntitlement,
+  loadAiParseUsage,
   loadEntitlements,
+  saveAiParseUsage,
   loadInsightCounter,
   loadOcrPass,
   saveInsightCounter,
@@ -81,7 +83,9 @@ export function App() {
   const [ocrError, setOcrError] = useState<OcrError | null>(null);
   const [ocrRawText, setOcrRawText] = useState('');
   const [aiFilled, setAiFilled] = useState<string[]>([]);
-  const [aiHint, setAiHint] = useState(false);
+  /** null=안내 없음 / 'used'=이번에 무료 1회 사용 / 'limit'=한도 소진 */
+  const [aiNotice, setAiNotice] = useState<'used' | 'limit' | null>(null);
+  const [aiUsage, setAiUsage] = useState(() => loadAiParseUsage());
   const [copied, setCopied] = useState(false);
   const [parsedPreview, setParsedPreview] = useState<ParsedTrade | null>(null);
 
@@ -119,7 +123,10 @@ export function App() {
   const insightLeft = remainingInsights(loadInsightCounter(), ent, now, todayKey);
   const insightLimit = dailyInsightLimit(ent, now);
   const insightUsedToday = insightLimit - insightLeft;
-  const hasUnlimited = isActive(ent, 'pro', now) || isActive(ent, 'records', now);
+  const hasPro = isActive(ent, 'pro', now);
+  const hasUnlimited = hasPro || isActive(ent, 'records', now);
+  const aiLimitToday = aiUsage !== null && aiUsage.date === todayKey ? aiUsage.limit : PARSE_LIMIT[hasPro ? 'pro' : 'free'];
+  const aiUsedToday = aiUsage !== null && aiUsage.date === todayKey ? aiUsage.used : 0;
   const monthSavedCount = trades.filter((t) => t.date.startsWith(todayKey.slice(0, 7))).length;
   const ocrReady = decideOcrGate(loadOcrPass(), ent, now, todayKey, REWARDED_AD_ID) === 'allow';
   const recordOk = canAddRecord(trades.length, ent, now);
@@ -265,20 +272,28 @@ export function App() {
     }
     setOcrRawText(result.text);
     setAiFilled([]);
-    setAiHint(false);
+    setAiNotice(null);
     // 1) 항상 로컬 규칙 파서 먼저 (오프라인·무료·비전송)
     let parsed = parseTradeText(result.text);
-    // 2) 핵심 필드가 비었고 프로 구독 중이면 서버(AI 정밀 인식)로 빈 칸만 보강
-    const isPro = isActive(ent, 'pro', new Date());
-    if (hasMissingCoreFields(parsed)) {
-      if (isPro && isAiParseAvailable()) {
-        const server = await requestAiParse(result.text, authConnected);
-        const { merged, filledByAi } = mergeParsed(parsed, server);
+    // 2) 핵심 필드가 비었을 때만 서버(AI 정밀 인식) 호출 — 무료 하루 1회·프로 하루 20회
+    const tier: ParseTier = isActive(ent, 'pro', new Date()) ? 'pro' : 'free';
+    if (hasMissingCoreFields(parsed) && isAiParseAvailable()) {
+      const r = await requestAiParse(result.text, { authConnected, tier });
+      if (r.status === 'ok') {
+        const { merged, filledByAi } = mergeParsed(parsed, r.parsed);
         parsed = merged;
         setAiFilled(filledByAi);
-      } else if (!isPro) {
-        setAiHint(true); // 무료 사용자: 빈 칸이 있을 때만 한 줄 안내
+        const usage = { date: todayKey, used: r.used, limit: r.limit };
+        saveAiParseUsage(usage);
+        setAiUsage(usage);
+        if (tier === 'free') setAiNotice('used');
+      } else if (r.status === 'limit') {
+        const usage = { date: todayKey, used: r.used, limit: r.limit };
+        saveAiParseUsage(usage);
+        setAiUsage(usage);
+        setAiNotice('limit'); // 조용히 로컬 결과 유지 + 안내 한 줄
       }
+      // fail: 조용히 로컬 결과만 유지
     }
     if (parsed.symbol !== undefined) setSymbol(parsed.symbol);
     if (parsed.side !== undefined) setSide(parsed.side);
@@ -382,6 +397,7 @@ export function App() {
     setReport(null);
     setAiReport(null);
     setReportMode('local');
+    setAiUsage(null);
     setShowWipeSheet(false);
     setFilterSymbol('전체');
     setShowAllList(false);
@@ -575,10 +591,17 @@ export function App() {
                   <span>날짜 <strong>{parsedPreview.date ?? date}</strong></span>
                 </div>
                 <button className="btn-primary" disabled={!isEffValid(effFromPreview(parsedPreview))} onClick={quickAdd}>바로 입력하기</button>
-                {aiHint && (
+                {aiNotice === 'used' && (
+                  <p className="ocr-note">오늘 무료 AI 인식 1회를 사용했어요. 프로를 쓰면 하루 20번까지 쓸 수 있어요.</p>
+                )}
+                {aiNotice === 'limit' && (
                   <p className="ocr-note">
-                    프로를 쓰면 못 읽은 항목도 AI가 채워드려요.{' '}
-                    <button className="inline-link" onClick={() => setTab('me')}>이용권 보기</button>
+                    {isActive(ent, 'pro', now)
+                      ? '오늘 AI 인식 한도를 다 썼어요. 내일 다시 쓸 수 있어요.'
+                      : '오늘 무료 AI 인식을 다 썼어요. 프로를 쓰면 하루 20번까지 쓸 수 있어요. '}
+                    {!isActive(ent, 'pro', now) && (
+                      <button className="inline-link" onClick={() => setTab('me')}>이용권 보기</button>
+                    )}
                   </p>
                 )}
                 {aiFilled.length > 0 && (
@@ -864,6 +887,11 @@ export function App() {
                 <span className="mini-label">오늘 습관 분석</span>
                 <span className="mini-value">{insightUsedToday}/{insightLimit}</span>
                 <span className="stat-sub">자정에 초기화돼요</span>
+              </div>
+              <div className="mini-card">
+                <span className="mini-label">오늘 AI 인식</span>
+                <span className="mini-value">{aiUsedToday}/{aiLimitToday}</span>
+                <span className="stat-sub">{hasPro ? '프로 한도' : '무료 체험 한도'}</span>
               </div>
               <div className="mini-card">
                 <span className="mini-label">OCR 자동 입력</span>

@@ -19,11 +19,15 @@ const MODEL = Deno.env.get('PARSE_MODEL') ?? 'claude-haiku-4-5';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
-/** 프로 구독자 전용 기능이지만 클라이언트 주장은 위조 가능하므로, userKey 기준 하루 상한으로 비용을 봉인한다. */
-const DAILY_CAP = 30;
+/**
+ * 무료도 하루 1회는 AI로 체험시키고(전환 유도), 그 이후는 프로 구독자만.
+ * 클라이언트 tier 주장은 위조 가능하므로 서버가 userKey 기준 하루 상한으로 비용을 봉인한다.
+ */
+const CAP = { free: 1, pro: 20 } as const;
 
-async function underCap(userKey: string): Promise<boolean> {
-  if (!SUPABASE_URL || !SERVICE_ROLE) return true; // 설정 전이면 통과(개발 편의)
+async function checkCap(userKey: string, tier: 'free' | 'pro'): Promise<{ ok: boolean; used: number; limit: number }> {
+  const limit = CAP[tier];
+  if (!SUPABASE_URL || !SERVICE_ROLE) return { ok: true, used: 0, limit }; // 설정 전이면 통과(개발 편의)
   try {
     const db = createClient(SUPABASE_URL, SERVICE_ROLE);
     const day = new Date().toISOString().slice(0, 10);
@@ -34,13 +38,13 @@ async function underCap(userKey: string): Promise<boolean> {
       .eq('user_key', key)
       .eq('day', day)
       .maybeSingle();
-    if (error) return true; // fail-open
+    if (error) return { ok: true, used: 0, limit }; // fail-open
     const used = data?.count ?? 0;
-    if (used >= DAILY_CAP) return false;
+    if (used >= limit) return { ok: false, used, limit };
     await db.from('analysis_usage').upsert({ user_key: key, day, count: used + 1 });
-    return true;
+    return { ok: true, used: used + 1, limit };
   } catch {
-    return true;
+    return { ok: true, used: 0, limit };
   }
 }
 
@@ -97,7 +101,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'method_not_allowed' });
   if (!ANTHROPIC_API_KEY) return json(503, { error: 'parse_unavailable' });
 
-  let body: { text?: string; userKey?: string };
+  let body: { text?: string; userKey?: string; tier?: 'free' | 'pro' };
   try {
     body = await req.json();
   } catch {
@@ -107,7 +111,9 @@ Deno.serve(async (req) => {
   if (text.trim().length < 5) return json(400, { error: 'empty_text' });
 
   const userKey = (body?.userKey ?? 'anon').slice(0, 128);
-  if (!(await underCap(userKey))) return json(429, { error: 'daily_limit', limit: DAILY_CAP });
+  const tier = body?.tier === 'pro' ? 'pro' : 'free';
+  const cap = await checkCap(userKey, tier);
+  if (!cap.ok) return json(429, { error: 'daily_limit', used: cap.used, limit: cap.limit, tier });
 
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   try {
@@ -122,7 +128,7 @@ Deno.serve(async (req) => {
     const block = response.content.find((b) => b.type === 'text');
     const parsed = block && 'text' in block ? JSON.parse(block.text) : null;
     if (!parsed) return json(502, { error: 'empty_parse' });
-    return json(200, { parsed, model: MODEL });
+    return json(200, { parsed, model: MODEL, used: cap.used, limit: cap.limit });
   } catch (e) {
     const status = (e as { status?: number })?.status;
     if (status === 429) return json(503, { error: 'upstream_rate_limited' });
