@@ -77,9 +77,8 @@ try {
   ok(st.includes('100%'), '승률 100%');
   ok(st.includes('2026-08'), '월별 손익');
 
-  // 분석 세그먼트: IAP 안내 + 습관 분석 (무료 1회)
+  // 분석 세그먼트: 습관 분석 (무료 1회)
   await clickBtn(page, '분석'); await wait(200);
-  ok((await text(page)).includes('토스 앱에서 이용 가능'), 'IAP 미지원 안내(브라우저)');
   await clickBtn(page, '습관 분석 보기'); await wait(200);
   ok((await text(page)).includes('한 줄 처방'), '습관 분석 리포트 표시');
 
@@ -110,6 +109,30 @@ try {
   const after = await text(page);
   ok(after.includes('삼성전자') && after.includes('테스트종목'), '리로드 후 기록 유지');
 
+  // ---- 내정보 탭: 미지원 환경 안내 + 이용 현황 ----
+  await clickTab(page, '내정보'); await wait(200);
+  const me = await text(page);
+  ok(me.includes('토스 로그인은 토스 앱에서 이용 가능'), '내정보: 로그인 미지원 안내(브라우저)');
+  ok(me.includes('이용 현황'), '내정보: 이용 현황 카드');
+  ok(me.includes('이용권'), '내정보: 이용권 카드');
+  ok(me.includes('토스 앱에서 이용 가능'), '내정보: IAP 미지원 안내(브라우저)');
+
+  // ---- 회원탈퇴 플로우: 커스텀 확인 시트 → 전체 데이터 삭제 ----
+  await clickBtn(page, '회원탈퇴'); await wait(200);
+  ok((await text(page)).includes('모든 기록이 삭제됩니다'), '탈퇴 확인 시트 표시');
+  await clickBtn(page, '취소'); await wait(150);
+  ok(await page.$('.sheet') === null, '취소 시 시트 닫힘');
+  await clickBtn(page, '회원탈퇴'); await wait(150);
+  await clickBtn(page, '모든 기록 삭제하고 탈퇴'); await wait(250);
+  const wiped = await page.evaluate(() => {
+    for (let i = 0; i < localStorage.length; i++) {
+      if (localStorage.key(i).startsWith('maemaelog.')) return false;
+    }
+    return true;
+  });
+  ok(wiped, '탈퇴 후 maemaelog.* 데이터 전부 삭제');
+  ok((await text(page)).includes('아직 기록이 없어요'), '탈퇴 후 초기 화면(홈)');
+
   // ---- 손상 localStorage 내성 ----
   await page.evaluate(() => {
     localStorage.setItem('maemaelog.trades', '{broken json!!');
@@ -121,7 +144,7 @@ try {
   ok((await text(page)).includes('아직 기록이 없어요'), '손상 데이터 → 초기 상태 복구');
 
   // ---- 금지 문자열/콘솔 에러 ----
-  for (const nm of ['홈', '입력', '통계']) {
+  for (const nm of ['홈', '입력', '통계', '내정보']) {
     await clickTab(page, nm); await wait(150);
     const t = await text(page);
     for (const bad of ['NaN', 'undefined', 'Infinity', '[object', 'null원']) ok(!t.includes(bad), `${nm}: 노출 없음 ${bad}`);

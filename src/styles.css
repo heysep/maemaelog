@@ -136,6 +136,21 @@ textarea.field-input { resize: vertical; min-height: 64px; }
 .stat-hero-sub { font-size: 13px; color: #c6d8e9; }
 .rx { font-size: 14px; line-height: 1.6; background: #f6f9fd; border-radius: 12px; padding: 12px 14px; margin-top: 8px; }
 .gate-sheet { display: flex; flex-direction: column; gap: 8px; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+
+.auth-ok { font-size: 15px; font-weight: 800; color: var(--navy); display: flex; align-items: center; min-height: 44px; }
+.badge.active-badge { background: var(--navy); color: #fff; margin-left: 6px; }
+.danger-link { min-height: 44px; font-size: 14px; font-weight: 700; color: var(--red); }
+.btn-danger { min-height: 50px; border-radius: 14px; background: var(--red); color: #fff; font-size: 16px; font-weight: 800; }
+.sheet-backdrop {
+  position: fixed; inset: 0; background: rgba(10, 22, 34, 0.55); z-index: 50;
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.sheet {
+  width: 100%; max-width: 480px; background: #fff; border-radius: 20px 20px 0 0;
+  padding: 22px 20px 28px; display: flex; flex-direction: column; gap: 12px;
+}
+.sheet-title { font-size: 18px; font-weight: 800; }
+.sheet-body { font-size: 14px; color: var(--sub); line-height: 1.6; }
 .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 2px; border-bottom: 1px solid var(--line); gap: 10px; }
 .stat-row:last-child { border-bottom: none; }
 .stat-name { font-size: 14px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

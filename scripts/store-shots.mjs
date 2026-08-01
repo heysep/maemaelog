@@ -87,5 +87,11 @@ try {
   await wait(200);
   await page.screenshot({ path: 'store-assets/shot3.png' });
 
+  // shot4 — 내정보: 이용 현황 + 이용권
+  await clickTab(page, '내정보'); await wait(250);
+  await page.evaluate(() => { window.scrollTo(0, 0); });
+  await setCopy(page, '이용 현황과 이용권을 한곳에서');
+  await page.screenshot({ path: 'store-assets/shot4.png' });
+
   console.log('shots done');
 } finally { await browser?.close(); server.kill(); }

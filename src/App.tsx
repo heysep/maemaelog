@@ -16,10 +16,14 @@ import {
   adsRemoved,
   canAddRecord,
   consumeInsight,
+  dailyInsightLimit,
   FREE_RECORD_LIMIT,
+  isActive,
   remainingInsights,
   type Entitlements,
 } from './core/limits';
+import { wipeAllData } from './core/wipe';
+import { isLoginSupported, loadAuthConnected, loginWithToss, logout } from './auth/tossLogin';
 import { decideOcrGate, passAfterAd } from './core/ocrGate';
 import { loadTrades, saveTrades } from './core/storage';
 import {
@@ -36,9 +40,9 @@ import { makeThumbnail, recognizeImage } from './ocr/ocr';
 import { showRewardedAd } from './ads/rewarded';
 import { BannerAd } from './ads/BannerAd';
 import { AD_GROUP_ID, REWARDED_AD_ID } from './ads/config';
-import { EmotionIcon, IconCamera, IconChart, IconHome, IconInfo, IconList, IconPen, IconTrash } from './components/icons';
+import { EmotionIcon, IconCamera, IconChart, IconHome, IconInfo, IconList, IconPen, IconTrash, IconUser } from './components/icons';
 
-type Tab = 'home' | 'write' | 'stats';
+type Tab = 'home' | 'write' | 'stats' | 'me';
 type PickTarget = 'symbol' | 'price' | 'qty';
 type OcrState = 'idle' | 'gate' | 'ad' | 'running' | 'done' | 'failed';
 
@@ -83,12 +87,26 @@ export function App() {
   const [iapNotice, setIapNotice] = useState('');
   const [buying, setBuying] = useState('');
 
+  // ---- 내정보 ----
+  const [authConnected, setAuthConnected] = useState(() => loadAuthConnected());
+  const [loginSupported, setLoginSupported] = useState(false);
+  const [loginNotice, setLoginNotice] = useState('');
+  const [showWipeSheet, setShowWipeSheet] = useState(false);
+  useEffect(() => {
+    void isLoginSupported().then(setLoginSupported).catch(() => setLoginSupported(false));
+  }, []);
+
   const now = new Date();
   const todayKey = todayStr();
   const stats = useMemo(() => computeStats(trades), [trades]);
   const symbols = useMemo(() => [...new Set(trades.map((t) => t.symbol))].sort(), [trades]);
   const noAds = adsRemoved(ent, now);
   const insightLeft = remainingInsights(loadInsightCounter(), ent, now, todayKey);
+  const insightLimit = dailyInsightLimit(ent, now);
+  const insightUsedToday = insightLimit - insightLeft;
+  const hasUnlimited = isActive(ent, 'pro', now) || isActive(ent, 'records', now);
+  const monthSavedCount = trades.filter((t) => t.date.startsWith(todayKey.slice(0, 7))).length;
+  const ocrReady = decideOcrGate(loadOcrPass(), ent, now, todayKey, REWARDED_AD_ID) === 'allow';
   const recordOk = canAddRecord(trades.length, ent, now);
   const [iapAvailable, setIapAvailable] = useState(false);
   useEffect(() => {
@@ -227,6 +245,32 @@ export function App() {
       setIapNotice('결제가 완료되지 않았어요. 잠시 후 다시 시도해 주세요.');
     }
     setBuying('');
+  };
+
+  const doLogin = async () => {
+    setLoginNotice('');
+    const r = await loginWithToss();
+    if (r === 'success') setAuthConnected(true);
+    else if (r === 'unsupported') setLoginNotice('토스 로그인은 토스 앱 안에서만 가능해요.');
+    else setLoginNotice('로그인이 완료되지 않았어요. 잠시 후 다시 시도해 주세요.');
+  };
+
+  const doLogout = () => {
+    logout();
+    setAuthConnected(false);
+  };
+
+  const doWipe = () => {
+    wipeAllData();
+    setTrades([]);
+    setEnt({});
+    setAuthConnected(false);
+    setReport(null);
+    setShowWipeSheet(false);
+    setFilterSymbol('전체');
+    setShowAllList(false);
+    resetForm();
+    setTab('home');
   };
 
   const sortedDesc = useMemo(
@@ -605,29 +649,106 @@ export function App() {
             )}
           </section>
 
+          <p className="ocr-note">
+            무료로는 습관 분석을 하루 1회 쓸 수 있어요. 내정보 탭의 이용권으로 하루 3회까지 늘릴 수 있어요.
+          </p>
+          </>
+          )}
+        </>
+      )}
+
+      {tab === 'me' && (
+        <>
+          <section className="panel">
+            <h2 className="panel-title"><IconUser size={18} />내 정보</h2>
+            {authConnected ? (
+              <p className="auth-ok">토스 계정 연결됨</p>
+            ) : loginSupported ? (
+              <button className="btn-primary" onClick={() => void doLogin()}>토스로 로그인</button>
+            ) : (
+              <p className="stat-sub">토스 로그인은 토스 앱에서 이용 가능해요.</p>
+            )}
+            {loginNotice !== '' && <p className="notice">{loginNotice}</p>}
+          </section>
+
+          <section className="panel">
+            <h2 className="panel-title"><IconList size={18} />이용 현황</h2>
+            <div className="grid2">
+              <div className="mini-card">
+                <span className="mini-label">총 기록</span>
+                <span className="mini-value">{trades.length}건</span>
+                <span className="stat-sub">{hasUnlimited ? '무제한' : `무료 한도 ${FREE_RECORD_LIMIT}건`}</span>
+              </div>
+              <div className="mini-card">
+                <span className="mini-label">이번 달 저장</span>
+                <span className="mini-value">{monthSavedCount}건</span>
+                <span className="stat-sub">{thisMonth}</span>
+              </div>
+              <div className="mini-card">
+                <span className="mini-label">오늘 습관 분석</span>
+                <span className="mini-value">{insightUsedToday}/{insightLimit}</span>
+                <span className="stat-sub">자정에 초기화돼요</span>
+              </div>
+              <div className="mini-card">
+                <span className="mini-label">OCR 자동 입력</span>
+                <span className="mini-value">{ocrReady ? '사용 가능' : '광고 후 가능'}</span>
+                <span className="stat-sub">{ocrReady ? '바로 쓸 수 있어요' : '영상 광고 1회 시청'}</span>
+              </div>
+            </div>
+          </section>
+
           <section className="panel">
             <h2 className="panel-title"><IconHome size={18} />이용권</h2>
-            {PRODUCTS.map((p) => (
-              <div key={p.sku} className="stat-row">
-                <div style={{ minWidth: 0 }}>
-                  <p className="stat-name">{p.name} · {p.priceLabel}</p>
-                  <p className="stat-sub">{p.desc}</p>
+            {PRODUCTS.map((p) => {
+              const key = entKeyForSku(p.sku);
+              const active = key !== null && isActive(ent, key, now);
+              return (
+                <div key={p.sku} className="stat-row">
+                  <div style={{ minWidth: 0 }}>
+                    <p className="stat-name">
+                      {p.name} · {p.priceLabel}
+                      {active && <span className="badge active-badge">이용 중</span>}
+                    </p>
+                    <p className="stat-sub">{p.desc}</p>
+                  </div>
+                  {active ? (
+                    <span className="stat-sub">활성</span>
+                  ) : iapAvailable ? (
+                    <button className="chip" onClick={() => void buy(p.sku)} disabled={buying !== ''}>
+                      {buying === p.sku ? '결제 중…' : '구독'}
+                    </button>
+                  ) : (
+                    <span className="stat-sub">토스 앱에서 이용 가능</span>
+                  )}
                 </div>
-                {iapAvailable ? (
-                  <button className="chip" onClick={() => void buy(p.sku)} disabled={buying !== ''}>
-                    {buying === p.sku ? '결제 중…' : '구매'}
-                  </button>
-                ) : (
-                  <span className="stat-sub">토스 앱에서 이용 가능</span>
-                )}
-              </div>
-            ))}
+              );
+            })}
             {iapNotice !== '' && <p className="ocr-note">{iapNotice}</p>}
             <p className="ocr-note">
               무료로는 기록 {FREE_RECORD_LIMIT}건, 습관 분석 하루 1회까지 쓸 수 있어요. 이용권 상태는 이 기기에만 저장돼요.
             </p>
           </section>
-          </>
+
+          <section className="panel">
+            {authConnected && <button className="btn-ghost" onClick={doLogout}>로그아웃</button>}
+            <button className="danger-link" onClick={() => setShowWipeSheet(true)}>회원탈퇴</button>
+            <p className="ocr-note">
+              기록·통계는 참고용이며 투자 권유가 아니에요. 개인 데이터는 이 기기에만 저장돼요.
+            </p>
+          </section>
+
+          {showWipeSheet && (
+            <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-label="회원탈퇴 확인">
+              <div className="sheet">
+                <p className="sheet-title">정말 탈퇴할까요?</p>
+                <p className="sheet-body">
+                  모든 기록이 삭제됩니다. 매매 기록·통계·이용권 상태를 포함한 이 기기의 앱 데이터가
+                  전부 지워지고 되돌릴 수 없어요.
+                </p>
+                <button className="btn-danger" onClick={doWipe}>모든 기록 삭제하고 탈퇴</button>
+                <button className="btn-ghost" onClick={() => setShowWipeSheet(false)}>취소</button>
+              </div>
+            </div>
           )}
         </>
       )}
@@ -641,6 +762,9 @@ export function App() {
         </button>
         <button className={`tab ${tab === 'stats' ? 'on' : ''}`} onClick={() => setTab('stats')}>
           <IconChart size={18} />통계
+        </button>
+        <button className={`tab ${tab === 'me' ? 'on' : ''}`} onClick={() => setTab('me')}>
+          <IconUser size={18} />내정보
         </button>
       </nav>
 

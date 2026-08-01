@@ -134,6 +134,15 @@ export function IconTrash({ size }: { size?: number }) {
   );
 }
 
+export function IconUser({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <circle cx="12" cy="8" r="3.6" />
+      <path d="M5 20c1.2-3.4 3.8-5 7-5s5.8 1.6 7 5" />
+    </Icon>
+  );
+}
+
 export function IconInfo({ size }: { size?: number }) {
   return (
     <Icon size={size}>
