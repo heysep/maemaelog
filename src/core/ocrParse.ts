@@ -41,6 +41,8 @@ const NOISE_WORDS = new Set([
   '현재', '현재가격', '보기', '현재가격보기', '주문접수', '주문시간', '시간',
   '가능', '불가능', '취소가능', '취소불가능', '목표', '수익률', '설정', '출금', '구매완료', '판매완료',
   '조회', '체결내역', '체결내역조회',
+  // OCR 쓰레기 토큰(로고·아이콘 오독)
+  'Toss', 'TOSS', 'The', 'THE', 'BY', 'Mx', 've',
 ]);
 
 function toNum(s: string): number {
@@ -60,11 +62,18 @@ export function parseTradeText(rawText: string): ParsedTrade {
   const result: ParsedTrade = {
     confident: { symbol: false, side: false, price: false, qty: false, date: false },
   };
-  // "적용 환율"·달러 표기 줄은 숫자 오인의 원인 — 통째로 제거
-  const text = normalizeOcrText(rawText)
+  // 환율 줄은 숫자 오인의 원인 — 파싱 본문에서는 제거하되, 교차검증용으로 원본은 남긴다
+  const fullText = normalizeOcrText(rawText);
+  const text = fullText
     .split('\n')
     .filter((l) => !l.includes('환율') && !/^\s*\$[\d,.]+\s*$/.test(l))
     .join('\n');
+  /** 특정 인덱스가 속한 줄 */
+  const lineAt = (idx: number): string => {
+    const s = text.lastIndexOf('\n', idx) + 1;
+    const e = text.indexOf('\n', idx);
+    return text.slice(s, e === -1 ? undefined : e);
+  };
 
   // ---- 매수/매도: 매수·구매 vs 매도·판매 ----
   const hasBuy = /매수|구매/.test(text);
@@ -87,6 +96,8 @@ export function parseTradeText(rawText: string): ParsedTrade {
   const setDate = (y: number, mo: number, d: number, from: number, to?: number): boolean => {
     if (!(y >= 2000 && y <= 2100 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return false;
     if (to !== undefined && isQueryRange(from, to)) return false;
+    // 출금(정산)일·결제일은 매매일이 아니다
+    if (/출금|정산|결제/.test(lineAt(from))) return false;
     result.date = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     result.confident.date = true;
     const tm = /(\d{1,2}):(\d{2})/.exec(text.slice(from));
@@ -95,11 +106,46 @@ export function parseTradeText(rawText: string): ParsedTrade {
     }
     return true;
   };
+  /** 붙어 있는 월일 문자열("724" → 7월 24일)을 유효 날짜가 되게 분해. 앞자리(짧은 월) 우선 */
+  const splitMonthDay = (s: string): [number, number] | null => {
+    for (const mLen of [1, 2]) {
+      const dLen = s.length - mLen;
+      if (dLen < 1 || dLen > 2) continue;
+      const mo = Number(s.slice(0, mLen));
+      const d = Number(s.slice(mLen));
+      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return [mo, d];
+    }
+    return null;
+  };
+
   {
     let found = false;
+    // 0) 날짜+시각이 통째로 붙은 경우 ("202672419:27" → 2026-07-24 19:27)
+    for (const m of fullText.matchAll(/(20\d{2})(\d{3,6}):(\d{2})/g)) {
+      const digits = m[2];
+      const minute = Number(m[3]);
+      if (minute > 59) continue;
+      // 시각은 붙은 숫자의 끝 1~2자리 — 2자리 해석 우선
+      for (const hLen of [2, 1]) {
+        if (digits.length - hLen < 2) continue;
+        const hour = Number(digits.slice(digits.length - hLen));
+        if (hour > 23) continue;
+        const md = splitMonthDay(digits.slice(0, digits.length - hLen));
+        if (md === null) continue;
+        const idx = text.indexOf(m[0]);
+        if (setDate(Number(m[1]), md[0], md[1], idx === -1 ? 0 : idx)) {
+          result.time = `${String(hour).padStart(2, '0')}:${m[3]}`;
+          found = true;
+        }
+        break;
+      }
+      if (found) break;
+    }
     // 1) 구두점 구분자 (앞뒤 공백 허용)
-    for (const m of text.matchAll(/(\d{4})\s*[.\-/,]\s*(\d{1,2})\s*[.\-/,]\s*(\d{1,2})/g)) {
-      if (setDate(Number(m[1]), Number(m[2]), Number(m[3]), m.index, m.index + m[0].length)) { found = true; break; }
+    if (!found) {
+      for (const m of text.matchAll(/(\d{4})\s*[.\-/,]\s*(\d{1,2})\s*[.\-/,]\s*(\d{1,2})/g)) {
+        if (setDate(Number(m[1]), Number(m[2]), Number(m[3]), m.index, m.index + m[0].length)) { found = true; break; }
+      }
     }
     // 2) 공백만 구분자 ("2026 7 23")
     if (!found) {
@@ -161,6 +207,59 @@ export function parseTradeText(rawText: string): ParsedTrade {
         result.confident.qty = true;
       }
       break;
+    }
+  }
+
+  /**
+   * ---- 해외주식(달러 표기) 화면: "1주당 가격  $319.97" + 다음 줄 원화(콤마 없음) ----
+   * 원화 숫자는 OCR에서 자릿수가 흔들리므로(4707163 / 4701632) "기준 환율"과 교차검증해
+   * 소수점 위치(÷1·÷10·÷100)를 보정한다. 기대값과 20% 넘게 벌어지면 채택하지 않는다
+   * (틀린 단가보다 빈 값이 낫다). 달러만 있고 환율이 없으면 단가를 채우지 않는다.
+   */
+  if (result.price === undefined) {
+    const lines = text.split('\n');
+    const PRICE_LABEL = /1\s*주\s*당\s*가격|1\s*주\s*가격|주\s*당\s*가격|평균\s*단가/;
+    let labelIdx = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!PRICE_LABEL.test(lines[i])) continue;
+      if (/현재\s*가격|목표/.test(lines[i])) continue; // "현재가격 보기"·"목표 수익률" 오인 방지
+      labelIdx = i;
+      break;
+    }
+    if (labelIdx >= 0) {
+      const scope = [lines[labelIdx], lines[labelIdx + 1] ?? ''].join('\n');
+      const usdM = /\$\s*([\d,]+(?:\.\d+)?)/.exec(scope);
+      // 환율 줄은 본문에서 걸러지므로 원본에서 찾는다
+      const rateM = /환율[^\n\d]*([\d,]+(?:\.\d+)?)/.exec(fullText);
+      const usd = usdM ? toNum(usdM[1]) : NaN;
+      const rate = rateM ? toNum(rateM[1]) : NaN;
+      // 콤마 없는 원화 숫자도 후보로 인정("4707163원")
+      const wonM = /(\d[\d,]{2,})\s*[원윈월]/.exec(scope);
+      if (Number.isFinite(usd) && usd > 0 && Number.isFinite(rate) && rate > 100) {
+        const expected = usd * rate;
+        let best: number | null = null;
+        let bestDiff = Infinity;
+        for (const m of text.matchAll(/\d[\d,]{3,}/g)) {
+          const raw = toNum(m[0]);
+          if (!Number.isFinite(raw) || raw <= 0) continue;
+          for (const div of [1, 10, 100]) {
+            const diff = Math.abs(raw / div - expected);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              best = Math.round(raw / div);
+            }
+          }
+        }
+        if (best !== null && bestDiff / expected <= 0.2) {
+          result.price = best; // 환율 교차검증 보정값 — 확신 낮음
+        }
+      } else if (wonM) {
+        const n = toNum(wonM[1]);
+        if (Number.isFinite(n) && n > 0) {
+          result.price = n;
+          result.confident.price = true;
+        }
+      }
     }
   }
 

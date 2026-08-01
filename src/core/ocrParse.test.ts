@@ -168,6 +168,48 @@ describe('parseTradeText — 증권앱 체결내역 패턴', () => {
     expect(p.time).toBe('23:18');
   });
 
+  it('실기기 토스증권 해외주식(달러 표기) 화면 — 환율 교차검증으로 단가·날짜 복구', () => {
+    // 사용자가 보내온 기기 OCR 원문 그대로 박제
+    const raw = [
+      '1146 . 수                     BY 63',
+      '<                                          현재가격 보기',
+      '알파벳 A 구매',
+      '',
+      'The                 구매완료                 출금',
+      '취소 가능              취소 불가능              7월 28일',
+      '구매 완료',
+      '목표 수익률 Mx',
+      '202672419:27                              목표 수익률 설정',
+      '1주당 가격                                          $319.97',
+      '4707163원',
+      '기준 환율                                         1469.40원',
+      've                                                      1%',
+      '= 구매 금액                                     $319.97',
+      '= Toss                               4701632',
+      '주문접수 내역                                                 N',
+      '달러 환전 내역                                          N',
+    ].join('\n');
+    const p = parseTradeText(raw);
+    expect(p.symbol).toBe('알파벳 A');
+    expect(p.side).toBe('buy');
+    expect(p.qty).toBe(1);
+    expect(p.date).toBe('2026-07-24'); // 출금일(7월 28일)이 아니라 주문일
+    expect(p.time).toBe('19:27');
+    expect(p.price).toBe(470163); // 319.97 × 1469.40 ≈ 470,161 기준 자릿수 보정
+    expect(p.confident.price).toBe(false);
+  });
+
+  it('달러 금액만 있고 환율이 없으면 단가를 채우지 않는다(원화 앱)', () => {
+    const p = parseTradeText('알파벳 A 구매\n1주당 가격  $319.97\n수량 1주');
+    expect(p.price).toBeUndefined();
+    expect(p.symbol).toBe('알파벳 A');
+  });
+
+  it('출금·정산 줄의 날짜는 매매일 후보에서 제외한다', () => {
+    const p = parseTradeText('구매 완료\n2026.7.24 19:27\n출금 예정일 2026.7.28');
+    expect(p.date).toBe('2026-07-24');
+  });
+
   it('"현재가격 보기" 헤더를 종목명으로 오인하지 않는다', () => {
     const p = parseTradeText('현재가격 보기\n주문접수 내역\n수량 3주');
     expect(p.symbol).not.toBe('현재');
