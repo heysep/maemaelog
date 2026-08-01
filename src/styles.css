@@ -144,6 +144,7 @@ textarea.field-input { resize: vertical; min-height: 64px; }
 
 .auth-ok { font-size: 15px; font-weight: 800; color: var(--navy); display: flex; align-items: center; min-height: 44px; }
 .badge.active-badge { background: var(--navy); color: #fff; margin-left: 6px; }
+.offline-badge { align-self: flex-start; }
 .danger-link { min-height: 44px; font-size: 14px; font-weight: 700; color: var(--red); }
 .btn-danger { min-height: 50px; border-radius: 14px; background: var(--red); color: #fff; font-size: 16px; font-weight: 800; }
 .sheet-backdrop {

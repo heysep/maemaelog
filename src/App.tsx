@@ -13,6 +13,8 @@ import {
 } from './core/journal';
 import { analyzeHabits, type HabitReport } from './core/insight';
 import { parseTradeText } from './core/ocrParse';
+import { buildStatsPayload } from './core/statsPayload';
+import { ANALYSIS_ENDPOINT, requestAiAnalysis, type AiReport } from './api/analysis';
 import {
   adsRemoved,
   canAddRecord,
@@ -84,6 +86,9 @@ export function App() {
   const [statsView, setStatsView] = useState<'stats' | 'insight'>('stats');
   const [autoFilled, setAutoFilled] = useState(false);
   const [report, setReport] = useState<HabitReport | null>(null);
+  const [aiReport, setAiReport] = useState<AiReport | null>(null);
+  const [reportMode, setReportMode] = useState<'ai' | 'offline' | 'local'>('local');
+  const [analyzing, setAnalyzing] = useState(false);
   const [insightNotice, setInsightNotice] = useState('');
   const [iapNotice, setIapNotice] = useState('');
   const [buying, setBuying] = useState('');
@@ -153,12 +158,14 @@ export function App() {
     persist([...trades, t]);
     resetForm();
     setReport(null);
+    setAiReport(null);
     setTab('home');
   };
 
   const removeTrade = (id: string) => {
     persist(trades.filter((t) => t.id !== id));
     setReport(null);
+    setAiReport(null);
   };
 
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -219,7 +226,8 @@ export function App() {
     else setQty(value);
   };
 
-  const runInsight = () => {
+  const runInsight = async () => {
+    if (analyzing) return;
     setInsightNotice('');
     const counter = loadInsightCounter();
     const left = remainingInsights(counter, ent, new Date(), todayKey);
@@ -227,8 +235,39 @@ export function App() {
       setInsightNotice('오늘 분석 횟수를 다 썼어요. 내일 다시 하거나 프로로 하루 3회까지 쓸 수 있어요.');
       return;
     }
+    const tier: 'free' | 'pro' = isActive(ent, 'pro', new Date()) ? 'pro' : 'free';
+    if (ANALYSIS_ENDPOINT !== '') {
+      setAnalyzing(true);
+      const r = await requestAiAnalysis(buildStatsPayload(trades), { authConnected, tier });
+      setAnalyzing(false);
+      if (r.status === 'ok') {
+        // 서버 used/limit을 로컬 카운터에 동기화(내정보 이용 현황 반영)
+        saveInsightCounter({ date: todayKey, used: r.used });
+        setAiReport(r.report);
+        setReport(null);
+        setReportMode('ai');
+        return;
+      }
+      if (r.status === 'limit') {
+        saveInsightCounter({ date: todayKey, used: r.limit });
+        setInsightNotice('오늘 AI 분석 한도를 다 썼어요. 프로 이용권으로 하루 3회까지 쓸 수 있어요.');
+        return;
+      }
+      if (r.status === 'few') {
+        setInsightNotice('AI 분석은 기록 3건부터 가능해요. 조금만 더 쌓아 볼까요?');
+        return;
+      }
+      // 서버 불가(503/네트워크) → 규칙 엔진 폴백 + "오프라인 분석" 배지
+      saveInsightCounter(consumeInsight(counter, todayKey));
+      setAiReport(null);
+      setReport(analyzeHabits(trades));
+      setReportMode('offline');
+      return;
+    }
     saveInsightCounter(consumeInsight(counter, todayKey));
+    setAiReport(null);
     setReport(analyzeHabits(trades));
+    setReportMode('local');
   };
 
   const buy = async (sku: string) => {
@@ -267,6 +306,8 @@ export function App() {
     setEnt({});
     setAuthConnected(false);
     setReport(null);
+    setAiReport(null);
+    setReportMode('local');
     setShowWipeSheet(false);
     setFilterSymbol('전체');
     setShowAllList(false);
@@ -621,18 +662,44 @@ export function App() {
           {statsView === 'insight' && (
           <>
           <section className="panel">
-            <h2 className="panel-title"><IconChart size={18} />습관 분석</h2>
+            <h2 className="panel-title"><IconChart size={18} />{ANALYSIS_ENDPOINT !== '' ? 'AI 분석' : '습관 분석'}</h2>
             <p className="ocr-note">
-              기록의 감정 태그와 매매 패턴을 규칙 기반으로 살펴보는 리포트예요. 오늘 남은 횟수: {insightLeft}회
+              {ANALYSIS_ENDPOINT !== ''
+                ? '기록의 익명 요약 통계만 AI에게 보내 매매 습관을 진단해요(메모·종목명은 보내지 않아요).'
+                : '기록의 감정 태그와 매매 패턴을 규칙 기반으로 살펴보는 리포트예요.'}
+              {' '}오늘 남은 횟수: {insightLeft}회
             </p>
-            {report === null && (
-              <button className="btn-primary" onClick={runInsight} disabled={trades.length === 0}>
-                습관 분석 보기
+            {report === null && aiReport === null && (
+              <button className="btn-primary" onClick={() => void runInsight()} disabled={trades.length === 0 || analyzing}>
+                {analyzing ? '분석 중…' : ANALYSIS_ENDPOINT !== '' ? 'AI 분석 보기' : '습관 분석 보기'}
               </button>
             )}
             {insightNotice !== '' && <p className="notice">{insightNotice}</p>}
+            {aiReport !== null && (
+              <>
+                <div>
+                  <h3 className="field-label">진단</h3>
+                  {aiReport.diagnosis.map((d) => (
+                    <p key={d} className="rx">{d}</p>
+                  ))}
+                </div>
+                <div>
+                  <h3 className="field-label">가장 아픈 습관</h3>
+                  <p className="rx"><strong>{aiReport.worstHabit.title}</strong><br />{aiReport.worstHabit.evidence}</p>
+                </div>
+                <div>
+                  <h3 className="field-label">강점</h3>
+                  <p className="rx">{aiReport.strength}</p>
+                </div>
+                <div>
+                  <h3 className="field-label">다음 주 처방</h3>
+                  <p className="rx">{aiReport.prescription}</p>
+                </div>
+              </>
+            )}
             {report !== null && (
               <>
+                {reportMode === 'offline' && <span className="badge emo offline-badge">오프라인 분석</span>}
                 <div>
                   <h3 className="field-label">한 줄 처방</h3>
                   {report.prescriptions.map((p) => (

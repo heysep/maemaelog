@@ -9,6 +9,14 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const ALLOWED = [/ReactNativeWebView is not available/, /Failed to load resource/];
 let passed = 0;
 const ok = (c, l) => { if (!c) throw new Error('FAIL: ' + l); passed++; console.log('  ok - ' + l); };
+// 헤르메틱 빌드: AI 분석 엔드포인트를 비워 실서버 호출 경로를 차단(폴백/미설정 경로만 검증)
+const { spawnSync } = await import('node:child_process');
+const build = spawnSync('npx', ['vite', 'build'], {
+  shell: true, stdio: 'ignore',
+  env: { ...process.env, VITE_ANALYSIS_ENDPOINT: '', VITE_AD_GROUP_ID: '', VITE_REWARDED_AD_ID: '' },
+});
+if (build.status !== 0) { console.error('vite build 실패'); process.exit(1); }
+
 const server = spawn('npx', ['vite', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], { shell: true, stdio: 'ignore' });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
