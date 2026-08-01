@@ -143,17 +143,38 @@ export function App() {
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  const addTrade = () => {
-    if (!canSave) return;
+  interface EffTrade { symbol: string; side: Side; price: number; qty: number; date: string; time: string }
+
+  const effFromState = (): EffTrade => ({ symbol: symbol.trim(), side, price: priceNum, qty: qtyNum, date, time });
+
+  /** 바로 입력하기 방어: 폼 상태가 비어 있으면 OCR 프리뷰 값으로 보강(계산 단가 포함) */
+  const effFromPreview = (m: ParsedTrade | null): EffTrade => ({
+    symbol: symbol.trim() !== '' ? symbol.trim() : (m?.symbol ?? ''),
+    side: m?.side ?? side,
+    price: price !== '' ? priceNum : (m?.price ?? NaN),
+    qty: qty !== '' ? qtyNum : (m?.qty ?? NaN),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : (m?.date ?? date),
+    time: time !== '' ? time : (m?.time ?? ''),
+  });
+
+  const isEffValid = (e: EffTrade): boolean =>
+    recordOk &&
+    e.symbol !== '' &&
+    Number.isFinite(e.price) && e.price > 0 &&
+    Number.isFinite(e.qty) && e.qty > 0 &&
+    /^\d{4}-\d{2}-\d{2}$/.test(e.date);
+
+  const saveTrade = (e: EffTrade) => {
+    if (!isEffValid(e)) return;
     setNotice('');
     const t: Trade = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      symbol: symbol.trim(),
-      side,
-      price: Math.round(priceNum),
-      qty: Math.round(qtyNum * 1e6) / 1e6, // 소수점 주식 허용(소수 6자리)
-      date,
-      ...(time !== '' ? { time } : {}),
+      symbol: e.symbol,
+      side: e.side,
+      price: Math.round(e.price),
+      qty: Math.round(e.qty * 1e6) / 1e6, // 소수점 주식 허용(소수 6자리)
+      date: e.date,
+      ...(e.time !== '' ? { time: e.time } : {}),
       memo: memo.trim(),
       emotion,
       ...(thumb ? { thumb } : {}),
@@ -164,6 +185,9 @@ export function App() {
     setAiReport(null);
     setTab('home');
   };
+
+  const addTrade = () => saveTrade(effFromState());
+  const quickAdd = () => saveTrade(effFromPreview(parsedPreview));
 
   const removeTrade = (id: string) => {
     persist(trades.filter((t) => t.id !== id));
@@ -452,6 +476,60 @@ export function App() {
             </p>
           )}
 
+          <div className="ocr-box">
+            <input
+              ref={fileRef}
+              id="f-image"
+              type="file"
+              accept="image/*"
+              onChange={onFileChange}
+              style={{ display: 'none' }}
+            />
+            <button className="btn-primary ocr-cta" onClick={() => fileRef.current?.click()}>
+              <IconCamera size={20} />거래내역 넣으면 자동 입력
+            </button>
+            <p className="ocr-note">증권앱 체결 화면 스크린샷을 고르면 종목·단가·수량·날짜를 자동으로 채워요.</p>
+            {thumb && <img className="ocr-thumb" src={thumb} alt="첨부한 체결 스크린샷 미리보기" />}
+            {ocrState === 'gate' && (
+              <div className="gate-sheet">
+                <p className="ocr-note">영상 광고를 한 번 보면 오늘 하루 종일 스크린샷 인식을 무료로 쓸 수 있어요.</p>
+                <button className="btn-primary" onClick={() => void watchAdThenOcr()}>영상 광고 보고 오늘 하루 무료로 쓰기</button>
+                <button className="btn-ghost" onClick={() => setOcrState('idle')}>다음에 할게요(직접 입력)</button>
+              </div>
+            )}
+            {ocrState === 'ad' && <p className="ocr-status">광고 재생 중…</p>}
+            {ocrState === 'running' && (
+              <p className="ocr-status">
+                {ocrProgress > 0 ? `인식 중… ${Math.round(ocrProgress * 100)}%` : '문자 인식기를 준비하고 있어요(최초 1회는 조금 걸려요)…'}
+              </p>
+            )}
+            {ocrState === 'failed' && (
+              <p className="ocr-status ocr-fail">
+                {ocrError === 'unsupported'
+                  ? '이 환경에서는 문자 인식이 지원되지 않아요. 직접 입력해 주세요.'
+                  : ocrError === 'image'
+                    ? '이미지를 읽지 못했어요. JPG·PNG 스크린샷으로 다시 시도하거나 직접 입력해 주세요.'
+                    : ocrError === 'timeout'
+                      ? '인식이 너무 오래 걸려 중단했어요. 다시 시도하거나 직접 입력해 주세요.'
+                      : '인식 엔진을 불러오지 못했어요. 잠시 후 다시 시도하거나 직접 입력해 주세요.'}
+              </p>
+            )}
+            {ocrState === 'done' && parsedPreview !== null && (
+              <div className="gate-sheet ocr-confirm">
+                <p className="ocr-status">자동으로 채웠어요</p>
+                <div className="ocr-preview">
+                  <span>종목 <strong>{parsedPreview.symbol ?? '—'}</strong></span>
+                  <span>구분 <strong>{parsedPreview.side === 'buy' ? '매수' : parsedPreview.side === 'sell' ? '매도' : '—'}</strong></span>
+                  <span>단가 <strong>{parsedPreview.price !== undefined ? formatWon(parsedPreview.price) : '—'}</strong></span>
+                  <span>수량 <strong>{parsedPreview.qty !== undefined ? `${formatQty(parsedPreview.qty)}주` : '—'}</strong></span>
+                  <span>날짜 <strong>{parsedPreview.date ?? date}</strong></span>
+                </div>
+                <button className="btn-primary" disabled={!isEffValid(effFromPreview(parsedPreview))} onClick={quickAdd}>바로 입력하기</button>
+              </div>
+            )}
+            <p className="ocr-note">사진을 고르면 바로 인식해 채워 드려요. 원본 이미지는 저장하지 않고, 512px 미리보기만 기록에 남아요.</p>
+          </div>
+
           <div className="seg" role="group" aria-label="매수 매도 구분">
             <button className={`seg-btn buy ${side === 'buy' ? 'on' : ''}`} onClick={() => setSide('buy')}>매수</button>
             <button className={`seg-btn sell ${side === 'sell' ? 'on' : ''}`} onClick={() => setSide('sell')}>매도</button>
@@ -528,59 +606,6 @@ export function App() {
               onChange={(e) => setMemo(e.target.value)}
               placeholder="왜 샀는지, 왜 팔았는지 한 줄이라도 남겨두면 다음 매매가 달라져요"
             />
-          </div>
-
-          <div className="ocr-box">
-            <input
-              ref={fileRef}
-              id="f-image"
-              type="file"
-              accept="image/*"
-              onChange={onFileChange}
-              style={{ display: 'none' }}
-            />
-            <button className="btn-ghost" onClick={() => fileRef.current?.click()}>
-              <IconCamera size={20} />체결 스크린샷 첨부
-            </button>
-            {thumb && <img className="ocr-thumb" src={thumb} alt="첨부한 체결 스크린샷 미리보기" />}
-            {ocrState === 'gate' && (
-              <div className="gate-sheet">
-                <p className="ocr-note">영상 광고를 한 번 보면 오늘 하루 종일 스크린샷 인식을 무료로 쓸 수 있어요.</p>
-                <button className="btn-primary" onClick={() => void watchAdThenOcr()}>영상 광고 보고 오늘 하루 무료로 쓰기</button>
-                <button className="btn-ghost" onClick={() => setOcrState('idle')}>다음에 할게요(직접 입력)</button>
-              </div>
-            )}
-            {ocrState === 'ad' && <p className="ocr-status">광고 재생 중…</p>}
-            {ocrState === 'running' && (
-              <p className="ocr-status">
-                {ocrProgress > 0 ? `인식 중… ${Math.round(ocrProgress * 100)}%` : '문자 인식기를 준비하고 있어요(최초 1회는 조금 걸려요)…'}
-              </p>
-            )}
-            {ocrState === 'failed' && (
-              <p className="ocr-status ocr-fail">
-                {ocrError === 'unsupported'
-                  ? '이 환경에서는 문자 인식이 지원되지 않아요. 직접 입력해 주세요.'
-                  : ocrError === 'image'
-                    ? '이미지를 읽지 못했어요. JPG·PNG 스크린샷으로 다시 시도하거나 직접 입력해 주세요.'
-                    : ocrError === 'timeout'
-                      ? '인식이 너무 오래 걸려 중단했어요. 다시 시도하거나 직접 입력해 주세요.'
-                      : '인식 엔진을 불러오지 못했어요. 잠시 후 다시 시도하거나 직접 입력해 주세요.'}
-              </p>
-            )}
-            {ocrState === 'done' && parsedPreview !== null && (
-              <div className="gate-sheet ocr-confirm">
-                <p className="ocr-status">자동으로 채웠어요</p>
-                <div className="ocr-preview">
-                  <span>종목 <strong>{parsedPreview.symbol ?? '—'}</strong></span>
-                  <span>구분 <strong>{parsedPreview.side === 'buy' ? '매수' : parsedPreview.side === 'sell' ? '매도' : '—'}</strong></span>
-                  <span>단가 <strong>{parsedPreview.price !== undefined ? formatWon(parsedPreview.price) : '—'}</strong></span>
-                  <span>수량 <strong>{parsedPreview.qty !== undefined ? `${formatQty(parsedPreview.qty)}주` : '—'}</strong></span>
-                  <span>날짜 <strong>{parsedPreview.date ?? date}</strong></span>
-                </div>
-                <button className="btn-primary" disabled={!canSave} onClick={addTrade}>바로 입력하기</button>
-              </div>
-            )}
-            <p className="ocr-note">사진을 고르면 바로 인식해 채워 드려요. 원본 이미지는 저장하지 않고, 512px 미리보기만 기록에 남아요.</p>
           </div>
 
           {notice !== '' && <p className="notice">{notice}</p>}

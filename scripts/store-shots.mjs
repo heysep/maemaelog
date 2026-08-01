@@ -65,11 +65,8 @@ try {
   await page.evaluate(() => { [...document.querySelectorAll('.chip')].find((c) => c.innerText === '확신')?.click(); });
   await setInput(page, '#f-memo', '실적 기대. 외국인 순매수 확인 후 진입');
   await wait(200);
-  await setCopy(page, '체결 스크린샷 속 숫자를 탭해서 입력 끝');
-  await page.evaluate(() => {
-    const lbl = [...document.querySelectorAll('.field-label')].find((x) => x.innerText.includes('그때의 감정'));
-    if (lbl) window.scrollTo(0, lbl.closest('.field').offsetTop - 170);
-  });
+  await setCopy(page, '체결 스크린샷 한 장이면 자동 입력 끝');
+  await page.evaluate(() => { window.scrollTo(0, 0); });
   await wait(200);
   await page.screenshot({ path: 'store-assets/shot2.png' });
 

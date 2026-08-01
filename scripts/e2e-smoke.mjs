@@ -176,7 +176,8 @@ try {
   await fxPage.setContent(`<!doctype html><meta charset="utf-8"><body style="margin:0;background:#fff;color:#191f28;font-family:'Malgun Gothic',sans-serif">
     <div style="padding:24px">
       <div style="font-size:30px;font-weight:800">삼성전자 매수 체결</div>
-      <div style="font-size:28px;margin-top:28px">체결단가 72,400 원</div>
+      <div style="font-size:26px;color:#555;margin-top:14px">2026.7.23 23:18</div>
+      <div style="font-size:28px;margin-top:24px">체결단가 72,400 원</div>
       <div style="font-size:28px;margin-top:16px">체결수량 10 주</div>
     </div></body>`);
   const fxPath = join(dir, 'fixture.png');
@@ -204,15 +205,30 @@ try {
   }
   ok(ocrDone, '오프라인 OCR 완료(60s 내)');
   ok((await page2.evaluate(() => document.body.innerText)).includes('자동으로 채웠어요'), '오프라인 OCR 인식 성공');
+  // 폼 5개 필드(종목명·구분·단가·수량·날짜) 전부 채워졌는지 고정
   const vals = await page2.evaluate(() => ({
     symbol: document.querySelector('#f-symbol').value,
     price: document.querySelector('#f-price').value,
     qty: document.querySelector('#f-qty').value,
+    date: document.querySelector('#f-date').value,
+    sideOn: [...document.querySelectorAll('.seg-btn.on')].map((b) => b.innerText.trim()).join(','),
   }));
   ok(vals.symbol === '삼성전자', `오프라인 OCR 종목명 자동 채움 (${vals.symbol})`);
   ok(vals.price === '72400', `오프라인 OCR 단가 자동 채움 (${vals.price})`);
   ok(vals.qty === '10', `오프라인 OCR 수량 자동 채움 (${vals.qty})`);
+  ok(vals.date === '2026-07-23', `오프라인 OCR 날짜 자동 채움 (${vals.date})`);
+  ok(vals.sideOn.includes('매수'), `오프라인 OCR 구분 자동 선택 (${vals.sideOn})`);
   ok(externalReqs.length === 0, '외부 네트워크 요청 0건' + (externalReqs.length ? ' — ' + externalReqs[0] : ''));
+  // "바로 입력하기" 한 번으로 저장 완료 — 단가 포함 전 필드가 기록에 반영되는지
+  await page2.evaluate(() => { [...document.querySelectorAll('button')].find((b) => b.innerText.trim() === '바로 입력하기')?.click(); });
+  await wait(300);
+  const savedRec = await page2.evaluate(() => {
+    const arr = JSON.parse(localStorage.getItem('maemaelog.trades') ?? '[]');
+    return arr[arr.length - 1] ?? null;
+  });
+  ok(savedRec !== null && savedRec.symbol === '삼성전자' && savedRec.side === 'buy'
+    && savedRec.price === 72400 && savedRec.qty === 10 && savedRec.date === '2026-07-23',
+    `바로 입력하기 저장 기록 전 필드 반영 (${JSON.stringify({ p: savedRec?.price, q: savedRec?.qty, d: savedRec?.date })})`);
   await page2.close();
 
   // ---- 금지 문자열/콘솔 에러 ----
