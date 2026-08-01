@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- 앱 아이콘 원본 — 딥네이비 그라데이션 배경 + 펼친 노트(흰 라인) 위 캔들 3개(빨강 양봉 1 면채움) + 연필.
+     라이트: file:///.../icon.html            → assets/icon-600.png
+     다크:   file:///.../icon.html?dark=1     → assets/icon-600-dark.png
+     래스터화: scripts/render-icon.mjs (puppeteer-core, 600×600) -->
+<meta charset="utf-8" />
+<style>html,body{margin:0;padding:0}svg{display:block;width:100vw;height:100vh}</style>
+<svg viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop id="s0" offset="0" stop-color="#143A5C"/>
+      <stop id="s1" offset="1" stop-color="#1E5280"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="600" fill="url(#bg)"/>
+
+  <!-- 펼친 노트: 흰 라인 stroke 24, 둥근 조인트 -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M300 178 C252 160 190 162 134 186 L134 366 C190 344 252 342 300 360 C348 342 410 344 466 366 L466 186 C410 162 348 160 300 178 Z"/>
+    <path d="M300 182 L300 356"/>
+  </g>
+
+  <!-- 캔들 차트: 왼쪽·가운데 흰 라인, 오른쪽 상승 양봉 빨강 면채움 -->
+  <g stroke-linecap="round">
+    <!-- 캔들 1 (흰 라인) -->
+    <path d="M192 252 v18 M192 322 v18" stroke="#FFFFFF" stroke-width="14"/>
+    <rect x="171" y="270" width="42" height="52" rx="6" fill="none" stroke="#FFFFFF" stroke-width="14"/>
+    <!-- 캔들 2 (흰 라인) -->
+    <path d="M258 222 v16 M258 302 v18" stroke="#FFFFFF" stroke-width="14"/>
+    <rect x="237" y="238" width="42" height="64" rx="6" fill="none" stroke="#FFFFFF" stroke-width="14"/>
+    <!-- 캔들 3 (빨강 상승 양봉, 면 채움) -->
+    <path d="M376 196 v18 M376 296 v20" stroke="#F04452" stroke-width="14"/>
+    <rect x="353" y="214" width="46" height="82" rx="8" fill="#F04452"/>
+  </g>
+
+  <!-- 연필: 노트 오른쪽 아래 사선 배치 (흰 면 + 배경색 심) -->
+  <g transform="rotate(45 468 416)">
+    <rect x="446" y="330" width="44" height="116" rx="8" fill="#FFFFFF"/>
+    <path d="M446 446 L490 446 L468 490 Z" fill="#FFFFFF"/>
+    <path d="M461 470 L475 470 L468 486 Z" fill="#143A5C"/>
+    <rect x="446" y="330" width="44" height="16" rx="6" fill="#F04452"/>
+  </g>
+
+  <script>
+    // ?dark=1 → 다크모드 배경(#0B2440 계열)
+    if (location.search.includes('dark')) {
+      document.getElementById('s0').setAttribute('stop-color', '#0B2440');
+      document.getElementById('s1').setAttribute('stop-color', '#123356');
+    }
+  </script>
+</svg>

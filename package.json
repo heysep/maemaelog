@@ -1,0 +1,34 @@
+{
+  "name": "stock-journal-toss",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "granite dev",
+    "build": "ait build",
+    "deploy": "ait deploy",
+    "vite:build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@apps-in-toss/web-framework": "^2.10.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tesseract.js": "^6.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.0.3",
+    "puppeteer-core": "^25.3.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22.12"
+  }
+}
