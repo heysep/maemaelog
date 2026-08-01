@@ -3,6 +3,7 @@ import {
   computeStats,
   EMOTIONS,
   extractCandidates,
+  formatPnlHeadline,
   formatSigned,
   formatWon,
   monthReturnRate,
@@ -286,6 +287,18 @@ export function App() {
   const thisMonth = todayKey.slice(0, 7);
   const monthStat = stats.byMonth.find((m) => m.month === thisMonth) ?? { month: thisMonth, realized: 0, costBasis: 0 };
   const monthRate = monthReturnRate(monthStat);
+  const monthSells = useMemo(() => {
+    let total = 0, win = 0, loss = 0;
+    for (const t of trades) {
+      if (t.side !== 'sell' || !t.date.startsWith(thisMonth)) continue;
+      const pnl = stats.pnlByTradeId[t.id];
+      if (pnl === undefined) continue;
+      total += 1;
+      if (pnl > 0) win += 1;
+      else if (pnl < 0) loss += 1;
+    }
+    return { total, win, loss };
+  }, [trades, stats, thisMonth]);
 
   const renderTradeRow = (t: Trade, withDelete: boolean) => {
     const pnl = stats.pnlByTradeId[t.id];
@@ -327,9 +340,20 @@ export function App() {
       {tab === 'home' && (
         <>
           <section className="stat-hero">
-            <span className="stat-hero-label">{Number(thisMonth.slice(5, 7))}월 실현손익 (수수료·세금 미반영)</span>
+            <div className="stat-hero-top">
+              <span className="stat-hero-label">{Number(thisMonth.slice(5, 7))}월 수익 (수수료·세금 미반영)</span>
+              <button
+                className="hero-link"
+                onClick={() => { setStatsView('insight'); setTab('stats'); }}
+              >
+                분석 보기 ›
+              </button>
+            </div>
             <span className={`stat-hero-value ${monthStat.realized > 0 ? 'up' : monthStat.realized < 0 ? 'down' : ''}`}>
-              {formatSigned(monthStat.realized)}
+              {formatPnlHeadline(monthStat.realized)}
+            </span>
+            <span className="stat-hero-sub">
+              총 {monthSells.total}건 · 수익 {monthSells.win}건 · 손실 {monthSells.loss}건
             </span>
             <span className="stat-hero-sub">
               수익률 {monthRate === null ? '—' : `${monthRate > 0 ? '+' : ''}${monthRate}%`} · 승률{' '}
@@ -337,12 +361,17 @@ export function App() {
             </span>
           </section>
 
+          {trades.length === 0 && (
+            <button className="panel empty-card" onClick={() => setTab('write')}>
+              <span className="empty-title">첫 매매를 기록해보세요</span>
+              <span className="empty-sub">기록 탭에서 오늘의 매매를 추가할 수 있어요</span>
+            </button>
+          )}
+
+          {trades.length > 0 && (
           <section className="panel">
             <h2 className="panel-title"><IconList size={18} />최근 매매 5건</h2>
             <div className="list">
-              {recent5.length === 0 && (
-                <p className="empty">아직 기록이 없어요.<br />입력 탭에서 첫 매매를 남겨 보세요.</p>
-              )}
               {recent5.map((t) => renderTradeRow(t, false))}
             </div>
             {trades.length > 0 && (
@@ -363,6 +392,7 @@ export function App() {
               </>
             )}
           </section>
+          )}
 
           {!noAds && <BannerAd adGroupId={AD_GROUP_ID} />}
         </>

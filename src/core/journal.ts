@@ -161,6 +161,12 @@ export function formatSigned(n: number): string {
   return `${n.toLocaleString('ko-KR')}원`;
 }
 
+/** 손익 헤드라인 표기: 0(및 -0)은 "+0원", 양수 "+", 음수 "-". "-0원"·NaN 노출 금지 */
+export function formatPnlHeadline(n: number): string {
+  if (!Number.isFinite(n) || n === 0) return '+0원';
+  return formatSigned(n);
+}
+
 /**
  * OCR 텍스트에서 골라 넣기 칩 후보 추출.
  * - 숫자 후보: 콤마 포함 숫자(1 이상), 중복 제거, 등장 순서 유지, 최대 12개

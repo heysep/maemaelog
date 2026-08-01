@@ -46,7 +46,21 @@ try {
   await page.goto(BASE, { waitUntil: 'networkidle0' });
 
   ok((await text(page)).includes('주식 매매일지'), '홈 타이틀');
-  ok((await text(page)).includes('아직 기록이 없어요'), '빈 상태 홈');
+  {
+    const t0 = await text(page);
+    ok(t0.includes('첫 매매를 기록해보세요'), '빈 상태 카드');
+    ok(t0.includes('+0원'), '빈 상태에도 수익 카드 +0원');
+    ok(!t0.includes('-0원'), '"-0원" 노출 금지');
+    ok(t0.includes('총 0건 · 수익 0건 · 손실 0건'), '빈 상태 건수 요약');
+  }
+  // "분석 보기 ›" 링크 → 통계 탭의 분석 화면
+  await clickBtn(page, '분석 보기 ›'); await wait(200);
+  ok((await text(page)).includes('습관 분석'), '분석 보기 링크 → 분석 화면');
+  await clickTab(page, '홈'); await wait(150);
+  // 빈 상태 카드 탭 → 입력 탭
+  await page.click('.empty-card'); await wait(200);
+  ok((await text(page)).includes('매매 기록 남기기'), '빈 상태 카드 탭 → 입력 탭');
+  await clickTab(page, '홈'); await wait(150);
 
   // ---- 수동 입력 경로: 매수 기록 저장 (OCR·tesseract 로드 없음) ----
   await clickTab(page, '입력'); await wait(150);
@@ -72,6 +86,7 @@ try {
   ok((await text(page)).includes('+50,000원'), '홈 이번 달 실현손익 +50,000원');
 
   await clickTab(page, '통계'); await wait(200);
+  await clickBtn(page, '통계'); await wait(200); // 세그먼트를 통계 뷰로(앞의 분석 보기 링크로 insight 상태일 수 있음)
   const st = await text(page);
   ok(st.includes('+50,000원'), '통계 실현손익');
   ok(st.includes('100%'), '승률 100%');
@@ -131,7 +146,7 @@ try {
     return true;
   });
   ok(wiped, '탈퇴 후 maemaelog.* 데이터 전부 삭제');
-  ok((await text(page)).includes('아직 기록이 없어요'), '탈퇴 후 초기 화면(홈)');
+  ok((await text(page)).includes('첫 매매를 기록해보세요'), '탈퇴 후 초기 화면(홈)');
 
   // ---- 손상 localStorage 내성 ----
   await page.evaluate(() => {
@@ -141,13 +156,13 @@ try {
     localStorage.setItem('maemaelog.ocrPass', '???');
   });
   await page.reload({ waitUntil: 'networkidle0' }); await wait(200);
-  ok((await text(page)).includes('아직 기록이 없어요'), '손상 데이터 → 초기 상태 복구');
+  ok((await text(page)).includes('첫 매매를 기록해보세요'), '손상 데이터 → 초기 상태 복구');
 
   // ---- 금지 문자열/콘솔 에러 ----
   for (const nm of ['홈', '입력', '통계', '내정보']) {
     await clickTab(page, nm); await wait(150);
     const t = await text(page);
-    for (const bad of ['NaN', 'undefined', 'Infinity', '[object', 'null원']) ok(!t.includes(bad), `${nm}: 노출 없음 ${bad}`);
+    for (const bad of ['NaN', 'undefined', 'Infinity', '[object', 'null원', '-0원']) ok(!t.includes(bad), `${nm}: 노출 없음 ${bad}`);
   }
   ok(errs.length === 0, '콘솔 에러 0건' + (errs.length ? ' — ' + errs[0] : ''));
   console.log(`\nE2E SMOKE PASS — ${passed} assertions`);

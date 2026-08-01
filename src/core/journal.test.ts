@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeStats,
   extractCandidates,
+  formatPnlHeadline,
   formatSigned,
   isValidTrade,
   monthReturnRate,
@@ -141,6 +142,14 @@ describe('isValidTrade / format', () => {
     expect(formatSigned(1000)).toBe('+1,000원');
     expect(formatSigned(-1000)).toBe('-1,000원');
     expect(formatSigned(0)).toBe('0원');
+  });
+
+  it('손익 헤드라인: 0·-0은 "+0원", "-0원"·NaN 노출 금지', () => {
+    expect(formatPnlHeadline(0)).toBe('+0원');
+    expect(formatPnlHeadline(-0)).toBe('+0원');
+    expect(formatPnlHeadline(NaN)).toBe('+0원');
+    expect(formatPnlHeadline(50000)).toBe('+50,000원');
+    expect(formatPnlHeadline(-500)).toBe('-500원');
   });
 });
 
