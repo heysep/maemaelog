@@ -36,7 +36,7 @@ import { makeThumbnail, recognizeImage } from './ocr/ocr';
 import { showRewardedAd } from './ads/rewarded';
 import { BannerAd } from './ads/BannerAd';
 import { AD_GROUP_ID, REWARDED_AD_ID } from './ads/config';
-import { IconCamera, IconChart, IconHome, IconInfo, IconList, IconPen, IconTrash } from './components/icons';
+import { EmotionIcon, IconCamera, IconChart, IconHome, IconInfo, IconList, IconPen, IconTrash } from './components/icons';
 
 type Tab = 'home' | 'write' | 'stats';
 type PickTarget = 'symbol' | 'price' | 'qty';
@@ -252,7 +252,7 @@ export function App() {
           <div className="trade-top">
             <span className="trade-symbol">{t.symbol}</span>
             <span className={`badge ${t.side}`}>{t.side === 'buy' ? '매수' : '매도'}</span>
-            {t.emotion !== '' && <span className="badge emo">{t.emotion}</span>}
+            {t.emotion !== '' && <span className="badge emo"><EmotionIcon emotion={t.emotion} size={13} />{t.emotion}</span>}
             {t.side === 'sell' && pnl !== undefined && (
               <span className={`badge ${pnl > 0 ? 'pnl-up' : pnl < 0 ? 'pnl-down' : 'emo'}`}>{formatSigned(pnl)}</span>
             )}
@@ -398,7 +398,7 @@ export function App() {
                   className={`chip ${emotion === e ? 'on' : ''}`}
                   onClick={() => setEmotion(emotion === e ? '' : e)}
                 >
-                  {e}
+                  <EmotionIcon emotion={e} size={17} />{e}
                 </button>
               ))}
             </div>

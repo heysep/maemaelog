@@ -63,6 +63,69 @@ export function IconCamera({ size }: { size?: number }) {
   );
 }
 
+/** 감정 태그: 확신 — 방패 + 체크 */
+export function IconShield({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M12 3l7 2.5v5c0 4.6-3 8.4-7 10.5-4-2.1-7-5.9-7-10.5v-5z" />
+      <path d="M9 11.8l2.1 2.2 3.9-4" />
+    </Icon>
+  );
+}
+
+/** 감정 태그: 추격 — 속도선 달린 화살표 */
+export function IconChase({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M8 12h12M15 7l5 5-5 5" />
+      <path d="M3 8h4M4 16h4" />
+    </Icon>
+  );
+}
+
+/** 감정 태그: 공포 — 느낌표 삼각형 */
+export function IconFear({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M12 4L21 19.5H3z" />
+      <path d="M12 10v4.2M12 17h.01" />
+    </Icon>
+  );
+}
+
+/** 감정 태그: 원칙 — 저울 */
+export function IconScale({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M12 4v16M8 20h8" />
+      <path d="M5 7h14" />
+      <path d="M5 7l-2.4 5a2.7 2.7 0 0 0 4.8 0z" />
+      <path d="M19 7l-2.4 5a2.7 2.7 0 0 0 4.8 0z" />
+    </Icon>
+  );
+}
+
+/** 감정 태그: 뇌동 — 회오리 물결 */
+export function IconSwirl({ size }: { size?: number }) {
+  return (
+    <Icon size={size}>
+      <path d="M3 7.5c2.5-2.4 5-2.4 7.5 0s5 2.4 7.5 0" />
+      <path d="M3 12.5c2.5-2.4 5-2.4 7.5 0s5 2.4 7.5 0" />
+      <path d="M6 17.5c2.2-2.1 4.4-2.1 6.6 0s4.4 2.1 6.6 0" />
+    </Icon>
+  );
+}
+
+/** 감정 태그명 → 아이콘 (칩·배지 공용) */
+export function EmotionIcon({ emotion, size = 16 }: { emotion: string; size?: number }) {
+  if (emotion === '확신') return <IconShield size={size} />;
+  if (emotion === '추격') return <IconChase size={size} />;
+  if (emotion === '공포') return <IconFear size={size} />;
+  if (emotion === '원칙') return <IconScale size={size} />;
+  if (emotion === '뇌동') return <IconSwirl size={size} />;
+  return null;
+}
+
 export function IconTrash({ size }: { size?: number }) {
   return (
     <Icon size={size}>
