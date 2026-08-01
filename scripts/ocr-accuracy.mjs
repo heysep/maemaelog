@@ -74,9 +74,21 @@ const samsungFixture = ({ symbol, sideKo, price, qty }) => page(`
 
 /** 토스증권 실화면 구조: "{종목명} 구매|판매" 제목 + 금액/환율/소수 수량 (단가 라벨 없음 → 금액÷수량 계산) */
 const tossSecFixture = ({ symbol, sideKo2, amount, qty, usd }) => page(`
-  <div style="padding:30px 24px">
+  <div style="display:flex;justify-content:space-between;font-size:19px;color:#333;padding:8px 20px">
+    <span>11:56</span><span>LTE 87%</span>
+  </div>
+  <div style="display:flex;justify-content:space-between;font-size:21px;color:#4e5968;padding:10px 20px">
+    <span>&lt;</span><span>현재가격 보기</span>
+  </div>
+  <div style="padding:18px 24px">
     <div style="font-size:34px;font-weight:800">${symbol} ${sideKo2}</div>
-    <div style="font-size:23px;color:#6b7684;margin-top:12px">${sideKo2} 완료</div>
+    <div style="display:flex;justify-content:space-between;font-size:21px;color:#6b7684;margin-top:20px">
+      <span>주문</span><span>${sideKo2}완료</span><span>출금</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:19px;color:#8b95a1;margin-top:8px">
+      <span>취소 가능</span><span>취소 불가능</span><span>7월 27일</span>
+    </div>
+    <div style="font-size:23px;color:#6b7684;margin-top:22px">${sideKo2} 완료</div>
     <div style="font-size:22px;color:#8b95a1;margin-top:6px">2026.7.23 23:18</div>
     <div style="margin-top:36px;border-top:2px solid #f2f4f6;padding-top:26px;font-size:26px;line-height:2.1">
       <div style="display:flex;justify-content:space-between"><span style="color:#6b7684">${sideKo2} 금액</span>

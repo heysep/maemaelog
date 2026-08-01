@@ -115,6 +115,42 @@ describe('parseTradeText — 증권앱 체결내역 패턴', () => {
     expect(parseTradeText('숫자없음').date).toBeUndefined();
   });
 
+  it('실기기 토스증권 화면 OCR 원문(상태바·헤더·진행단계 노이즈 포함) 전체 파싱', () => {
+    // 실물 스크린샷을 scripts/ocr-real.mjs로 돌려 얻은 원시 OCR 텍스트 구조 재현
+    const raw = [
+      '11:56 SM@ «                Ke il 9',
+      '€                                       현재가격 보기',
+      '알파벳 A 구매',
+      '주문                  구매완료                  출금',
+      '취소 가능                취소 불가능                7월 27일',
+      '구매 완료',
+      '목표 수의 류 설정',
+      '2026723 23:18                         ana',
+      '으',
+      '구매 금액                                  506,985원',
+      '$341.49',
+      '적용 환율                                  1.484.59원',
+      '수량                                        1.071309주',
+      '주문접수 내역                                           ^',
+      '주문 시간                          2026.7.23 23:18',
+      'xo oa                 AAH KO /1IKIL',
+      'III                 O                  <',
+    ].join('\n');
+    const p = parseTradeText(raw);
+    expect(p.symbol).toBe('알파벳 A');
+    expect(p.side).toBe('buy');
+    expect(p.qty).toBe(1.071309);
+    expect(p.price).toBe(473239); // 506,985 ÷ 1.071309 (±1원 기준 내)
+    expect(p.date).toBe('2026-07-23');
+    expect(p.time).toBe('23:18');
+  });
+
+  it('"현재가격 보기" 헤더를 종목명으로 오인하지 않는다', () => {
+    const p = parseTradeText('현재가격 보기\n주문접수 내역\n수량 3주');
+    expect(p.symbol).not.toBe('현재');
+    expect(p.symbol).not.toBe('현재가격');
+  });
+
   it('빈 문자열 안전', () => {
     const p = parseTradeText('');
     expect(p.confident).toEqual({ symbol: false, side: false, price: false, qty: false, date: false });

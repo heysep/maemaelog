@@ -29,6 +29,10 @@ const NOISE_WORDS = new Set([
   '취소', '접수', '완료', '안내', '알림', '내역', '국내', '해외', '보통', '지정가',
   '시장가', '일반', '위탁', '증권', '종목', '종목명', '환율', '적용',
   '구분', '매매구분', '거래구분', '주문구분',
+  // 실기기 화면 UI 노이즈 (상태바·헤더·진행단계·버튼)
+  '현재', '현재가격', '보기', '현재가격보기', '주문접수', '주문시간', '시간',
+  '가능', '불가능', '취소가능', '취소불가능', '목표', '수익률', '설정', '출금', '구매완료', '판매완료',
+  '조회', '체결내역', '체결내역조회',
 ]);
 
 function toNum(s: string): number {
@@ -150,6 +154,8 @@ export function parseTradeText(rawText: string): ParsedTrade {
     if (!m) continue;
     const cand = m[1].trim();
     if (cand === '' || NOISE_WORDS.has(cand) || !/[가-힣A-Za-z]/.test(cand)) continue;
+    // "현재가격 보기"·"주문 취소 가능" 같은 UI 문구 오인 방지
+    if (/현재|보기|가격|취소|접수|시간|내역|완료|출금|설정|수익률/.test(cand)) continue;
     titleSymbol = cand;
     break;
   }
