@@ -2,17 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   computeStats,
   EMOTIONS,
-  extractCandidates,
+  formatQty,
   formatPnlHeadline,
   formatSigned,
   formatWon,
   monthReturnRate,
-  type OcrCandidates,
   type Side,
   type Trade,
 } from './core/journal';
 import { analyzeHabits, type HabitReport } from './core/insight';
-import { parseTradeText } from './core/ocrParse';
+import { parseTradeText, type ParsedTrade } from './core/ocrParse';
 import { buildStatsPayload } from './core/statsPayload';
 import { ANALYSIS_ENDPOINT, requestAiAnalysis, type AiReport } from './api/analysis';
 import {
@@ -39,14 +38,13 @@ import {
 } from './iap/entitlements';
 import { entKeyForSku, PRODUCTS } from './iap/products';
 import { ensureIapModule, isIapSupported, purchase } from './iap/purchase';
-import { makeThumbnail, recognizeImage } from './ocr/ocr';
+import { makeThumbnail, recognizeImage, warmupOcr } from './ocr/ocr';
 import { showRewardedAd } from './ads/rewarded';
 import { BannerAd } from './ads/BannerAd';
 import { AD_GROUP_ID, REWARDED_AD_ID } from './ads/config';
 import { EmotionIcon, IconCamera, IconChart, IconHome, IconInfo, IconList, IconPen, IconTrash, IconUser } from './components/icons';
 
 type Tab = 'home' | 'write' | 'stats' | 'me';
-type PickTarget = 'symbol' | 'price' | 'qty';
 type OcrState = 'idle' | 'gate' | 'ad' | 'running' | 'done' | 'failed';
 
 function todayStr(): string {
@@ -77,14 +75,13 @@ export function App() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [ocrState, setOcrState] = useState<OcrState>('idle');
-  const [candidates, setCandidates] = useState<OcrCandidates | null>(null);
-  const [pickTarget, setPickTarget] = useState<PickTarget>('price');
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [parsedPreview, setParsedPreview] = useState<ParsedTrade | null>(null);
 
   // ---- 목록/통계 ----
   const [filterSymbol, setFilterSymbol] = useState('전체');
   const [showAllList, setShowAllList] = useState(false);
   const [statsView, setStatsView] = useState<'stats' | 'insight'>('stats');
-  const [autoFilled, setAutoFilled] = useState(false);
   const [report, setReport] = useState<HabitReport | null>(null);
   const [aiReport, setAiReport] = useState<AiReport | null>(null);
   const [reportMode, setReportMode] = useState<'ai' | 'offline' | 'local'>('local');
@@ -101,6 +98,11 @@ export function App() {
   useEffect(() => {
     void isLoginSupported().then(setLoginSupported).catch(() => setLoginSupported(false));
   }, []);
+
+  // 입력 탭 첫 진입 시 OCR 언어 데이터 백그라운드 프리로드(최초 1회 지연 완화)
+  useEffect(() => {
+    if (tab === 'write') warmupOcr();
+  }, [tab]);
 
   const now = new Date();
   const todayKey = todayStr();
@@ -135,7 +137,7 @@ export function App() {
 
   const resetForm = () => {
     setSymbol(''); setPrice(''); setQty(''); setMemo(''); setEmotion(''); setTime('');
-    setThumb(null); setImageFile(null); setCandidates(null); setOcrState('idle');
+    setThumb(null); setImageFile(null); setOcrState('idle'); setOcrProgress(0); setParsedPreview(null);
     setDate(todayStr());
     if (fileRef.current) fileRef.current.value = '';
   };
@@ -148,7 +150,7 @@ export function App() {
       symbol: symbol.trim(),
       side,
       price: Math.round(priceNum),
-      qty: Math.round(qtyNum),
+      qty: Math.round(qtyNum * 1e6) / 1e6, // 소수점 주식 허용(소수 6자리)
       date,
       ...(time !== '' ? { time } : {}),
       memo: memo.trim(),
@@ -168,62 +170,59 @@ export function App() {
     setAiReport(null);
   };
 
+  /** 이미지 선택 즉시: 썸네일 → (필요 시 광고 게이트 1회) → OCR 자동 시작 */
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setImageFile(file);
-    setCandidates(null);
+    setParsedPreview(null);
     setOcrState('idle');
     const t = await makeThumbnail(file);
     setThumb(t);
     if (t === null) setNotice('이미지가 너무 크거나 읽을 수 없어 첨부 없이 기록돼요.');
     else setNotice('');
-  };
-
-  const startOcrFlow = () => {
-    if (!imageFile || ocrState === 'running' || ocrState === 'ad') return;
+    // 오늘 패스가 있거나 광고 미설정이면 완전 무마찰로 바로 인식 시작
     const decision = decideOcrGate(loadOcrPass(), ent, now, todayKey, REWARDED_AD_ID);
-    if (decision === 'allow') void runOcr();
+    if (decision === 'allow') void runOcr(file);
     else setOcrState('gate');
   };
 
   const watchAdThenOcr = async () => {
+    if (!imageFile) return;
     setOcrState('ad');
     // 광고 로드/재생 실패 시에도 통과시킨다(사용자를 벌주지 않기)
     const result = await showRewardedAd(REWARDED_AD_ID);
     saveOcrPass(passAfterAd(result, todayKey));
-    await runOcr();
+    await runOcr(imageFile);
   };
 
-  const runOcr = async () => {
-    if (!imageFile) return;
+  /** OCR → 파싱 → 인식된 것만 자동 채움 + 누락 필드로 포커스 이동 */
+  const runOcr = async (file: File) => {
     setOcrState('running');
-    setAutoFilled(false);
-    const text = await recognizeImage(imageFile);
+    setOcrProgress(0);
+    const text = await recognizeImage(file, (p) => setOcrProgress(p));
     if (text === null) {
       setOcrState('failed');
       return;
     }
-    // 자동 채움이 기본 — 파싱된 값은 폼에 바로 넣고, 확신 낮은 필드는 칩으로 보정
     const parsed = parseTradeText(text);
-    let filled = false;
-    if (parsed.symbol !== undefined) { setSymbol(parsed.symbol); filled = true; }
-    if (parsed.side !== undefined) { setSide(parsed.side); filled = true; }
-    if (parsed.price !== undefined) { setPrice(String(parsed.price)); filled = true; }
-    if (parsed.qty !== undefined) { setQty(String(parsed.qty)); filled = true; }
-    setAutoFilled(filled);
-    setCandidates(extractCandidates(text));
-    setOcrState('done');
-  };
-
-  const fillFromChip = (value: string, kind: 'name' | 'number') => {
-    if (kind === 'name') {
-      setSymbol(value);
+    if (parsed.symbol !== undefined) setSymbol(parsed.symbol);
+    if (parsed.side !== undefined) setSide(parsed.side);
+    if (parsed.price !== undefined) setPrice(String(parsed.price));
+    if (parsed.qty !== undefined) setQty(String(parsed.qty));
+    if (parsed.date !== undefined) setDate(parsed.date);
+    if (parsed.time !== undefined) setTime(parsed.time);
+    const anyFilled =
+      parsed.symbol !== undefined || parsed.price !== undefined || parsed.qty !== undefined || parsed.side !== undefined;
+    if (!anyFilled) {
+      setOcrState('failed');
       return;
     }
-    if (pickTarget === 'symbol') setSymbol(value);
-    else if (pickTarget === 'price') setPrice(value);
-    else setQty(value);
+    setParsedPreview(parsed);
+    setOcrState('done');
+    // 누락 필드로 포커스 이동 — 이어서 수동 입력
+    const missing = parsed.symbol === undefined ? 'f-symbol' : parsed.price === undefined ? 'f-price' : parsed.qty === undefined ? 'f-qty' : null;
+    if (missing !== null) setTimeout(() => document.getElementById(missing)?.focus(), 50);
   };
 
   const runInsight = async () => {
@@ -355,7 +354,7 @@ export function App() {
               <span className={`badge ${pnl > 0 ? 'pnl-up' : pnl < 0 ? 'pnl-down' : 'emo'}`}>{formatSigned(pnl)}</span>
             )}
           </div>
-          <p className="trade-detail">{formatWon(t.price)} · {t.qty.toLocaleString('ko-KR')}주</p>
+          <p className="trade-detail">{formatWon(t.price)} · {formatQty(t.qty)}주</p>
           {t.memo !== '' && <p className="trade-memo">{t.memo}</p>}
           <p className="trade-date">{t.date}{t.time ? ` ${t.time}` : ''}</p>
         </div>
@@ -458,10 +457,9 @@ export function App() {
             <label className="field-label" htmlFor="f-symbol">종목명</label>
             <input
               id="f-symbol"
-              className={`field-input ${candidates && pickTarget === 'symbol' ? 'picking' : ''}`}
+              className="field-input"
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
-              onFocus={() => setPickTarget('symbol')}
               placeholder="예: 삼성전자"
             />
           </div>
@@ -471,11 +469,10 @@ export function App() {
               <label className="field-label" htmlFor="f-price">단가(원)</label>
               <input
                 id="f-price"
-                className={`field-input ${candidates && pickTarget === 'price' ? 'picking' : ''}`}
+                className="field-input"
                 inputMode="numeric"
                 value={price}
                 onChange={(e) => setPrice(e.target.value.replace(/[^\d]/g, ''))}
-                onFocus={() => setPickTarget('price')}
                 placeholder="72000"
               />
             </div>
@@ -483,12 +480,11 @@ export function App() {
               <label className="field-label" htmlFor="f-qty">수량(주)</label>
               <input
                 id="f-qty"
-                className={`field-input ${candidates && pickTarget === 'qty' ? 'picking' : ''}`}
-                inputMode="numeric"
+                className="field-input"
+                inputMode="decimal"
                 value={qty}
-                onChange={(e) => setQty(e.target.value.replace(/[^\d]/g, ''))}
-                onFocus={() => setPickTarget('qty')}
-                placeholder="10"
+                onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ''))}
+                placeholder="10 (소수점 가능)"
               />
             </div>
           </div>
@@ -543,52 +539,36 @@ export function App() {
               <IconCamera size={20} />체결 스크린샷 첨부
             </button>
             {thumb && <img className="ocr-thumb" src={thumb} alt="첨부한 체결 스크린샷 미리보기" />}
-            {imageFile && ocrState !== 'done' && ocrState !== 'gate' && (
-              <button className="btn-ghost" onClick={startOcrFlow} disabled={ocrState === 'running' || ocrState === 'ad'}>
-                {ocrState === 'running' ? '문자를 인식하는 중…' : ocrState === 'ad' ? '광고 재생 중…' : '거래내역 넣으면 자동 입력'}
-              </button>
-            )}
             {ocrState === 'gate' && (
               <div className="gate-sheet">
                 <p className="ocr-note">영상 광고를 한 번 보면 오늘 하루 종일 스크린샷 인식을 무료로 쓸 수 있어요.</p>
                 <button className="btn-primary" onClick={() => void watchAdThenOcr()}>영상 광고 보고 오늘 하루 무료로 쓰기</button>
-                <button className="btn-ghost" onClick={() => setOcrState('idle')}>다음에 할게요</button>
+                <button className="btn-ghost" onClick={() => setOcrState('idle')}>다음에 할게요(직접 입력)</button>
               </div>
             )}
-            {ocrState === 'running' && <p className="ocr-status">화면의 숫자와 종목명을 읽고 있어요. 잠시만요.</p>}
+            {ocrState === 'ad' && <p className="ocr-status">광고 재생 중…</p>}
+            {ocrState === 'running' && (
+              <p className="ocr-status">
+                {ocrProgress > 0 ? `인식 중… ${Math.round(ocrProgress * 100)}%` : '문자 인식기를 준비하고 있어요(최초 1회는 조금 걸려요)…'}
+              </p>
+            )}
             {ocrState === 'failed' && (
               <p className="ocr-status ocr-fail">인식하지 못했어요. 네트워크를 확인하거나 직접 입력해 주세요.</p>
             )}
-            {candidates && (
-              <>
-                {autoFilled && <p className="ocr-status">스크린샷을 읽어 자동으로 채웠어요. 확인 후 저장해 주세요.</p>}
-                <p className="ocr-note">
-                  {autoFilled
-                    ? '값이 다르면 고칠 칸(종목명·단가·수량)을 누른 뒤 아래 칩을 눌러 바꿀 수 있어요.'
-                    : '채울 칸(종목명·단가·수량)을 먼저 누른 뒤, 아래 칩을 누르면 그 칸에 들어가요.'}
-                </p>
-                {candidates.names.length > 0 && (
-                  <div className="chips">
-                    {candidates.names.map((n) => (
-                      <button key={`n-${n}`} className="chip" onClick={() => fillFromChip(n, 'name')}>{n}</button>
-                    ))}
-                  </div>
-                )}
-                {candidates.numbers.length > 0 && (
-                  <div className="chips">
-                    {candidates.numbers.map((n) => (
-                      <button key={`d-${n}`} className="chip num" onClick={() => fillFromChip(String(n), 'number')}>
-                        {n.toLocaleString('ko-KR')}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {candidates.names.length === 0 && candidates.numbers.length === 0 && (
-                  <p className="ocr-note">쓸 만한 숫자나 종목명을 찾지 못했어요. 직접 입력해 주세요.</p>
-                )}
-              </>
+            {ocrState === 'done' && parsedPreview !== null && (
+              <div className="gate-sheet ocr-confirm">
+                <p className="ocr-status">자동으로 채웠어요</p>
+                <div className="ocr-preview">
+                  <span>종목 <strong>{parsedPreview.symbol ?? '—'}</strong></span>
+                  <span>구분 <strong>{parsedPreview.side === 'buy' ? '매수' : parsedPreview.side === 'sell' ? '매도' : '—'}</strong></span>
+                  <span>단가 <strong>{parsedPreview.price !== undefined ? formatWon(parsedPreview.price) : '—'}</strong></span>
+                  <span>수량 <strong>{parsedPreview.qty !== undefined ? `${formatQty(parsedPreview.qty)}주` : '—'}</strong></span>
+                  <span>날짜 <strong>{parsedPreview.date ?? date}</strong></span>
+                </div>
+                <button className="btn-primary" disabled={!canSave} onClick={addTrade}>바로 입력하기</button>
+              </div>
             )}
-            <p className="ocr-note">원본 이미지는 저장하지 않고, 512px로 줄인 미리보기만 기록에 남아요.</p>
+            <p className="ocr-note">사진을 고르면 바로 인식해 채워 드려요. 원본 이미지는 저장하지 않고, 512px 미리보기만 기록에 남아요.</p>
           </div>
 
           {notice !== '' && <p className="notice">{notice}</p>}
@@ -634,7 +614,7 @@ export function App() {
                   <div style={{ minWidth: 0 }}>
                     <p className="stat-name">{s.symbol}</p>
                     <p className="stat-sub">
-                      {s.holdingQty > 0 ? `보유 ${s.holdingQty.toLocaleString('ko-KR')}주 · 평단 ${formatWon(s.avgPrice)}` : '전량 청산'}
+                      {s.holdingQty > 0 ? `보유 ${formatQty(s.holdingQty)}주 · 평단 ${formatWon(s.avgPrice)}` : '전량 청산'}
                     </p>
                   </div>
                   <span className={`stat-val ${s.realized > 0 ? 'up-txt' : s.realized < 0 ? 'down-txt' : ''}`}>

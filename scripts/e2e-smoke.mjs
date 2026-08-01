@@ -47,6 +47,8 @@ try {
   ok(up, 'preview 기동');
   browser = await puppeteer.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
   const page = await browser.newPage();
+  // 외부 네트워크 의존 금지: OCR(tesseract 언어 데이터 CDN) 경로 차단 → 우아한 실패 경로 검증
+  await page.evaluateOnNewDocument(() => { window.__MAEMAE_DISABLE_OCR = true; });
   const errs = [];
   page.on('console', (m) => { if (m.type() === 'error' && !ALLOWED.some((re) => re.test(m.text()))) errs.push(m.text()); });
   page.on('pageerror', (e) => { if (!ALLOWED.some((re) => re.test(e.message))) errs.push(e.message); });
@@ -112,8 +114,10 @@ try {
   await clickTab(page, '입력'); await wait(150);
   const fileInput = await page.$('#f-image');
   await fileInput.uploadFile(pngPath);
-  await wait(500);
+  await wait(600);
   ok(await page.$('.ocr-thumb') !== null, '썸네일 미리보기 표시');
+  // 이미지 선택 즉시 OCR 자동 시작 → (차단 환경) 우아한 실패 → 수동 입력으로 계속
+  ok((await text(page)).includes('인식하지 못했어요'), 'OCR 실패 시 안내 후 수동 입력 유지');
   await setInput(page, '#f-symbol', '테스트종목');
   await setInput(page, '#f-price', '1000');
   await setInput(page, '#f-qty', '1');

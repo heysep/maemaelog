@@ -8,7 +8,8 @@ describe('parseTradeText — 증권앱 체결내역 패턴', () => {
     expect(p.side).toBe('buy');
     expect(p.price).toBe(72000);
     expect(p.qty).toBe(10);
-    expect(p.confident).toEqual({ symbol: false, side: true, price: true, qty: true });
+    // "삼성전자 매수 체결" 제목 줄에서 종목명을 확신으로 추출한다
+    expect(p.confident).toEqual({ symbol: true, side: true, price: true, qty: true, date: false });
   });
 
   it('종목명 라벨이 있으면 확신 종목명', () => {
@@ -81,8 +82,41 @@ describe('parseTradeText — 증권앱 체결내역 패턴', () => {
     expect(p.price).toBe(72400);
   });
 
+  it('토스증권형: "{이름} 구매" 제목 + 금액÷수량 단가 계산 + 소수 수량 + 날짜 + 환율 무시', () => {
+    const p = parseTradeText(
+      '알파벳 A 구매\n구매 완료\n2026.7.23 23:18\n구매 금액 506,985원\n$341.49\n적용 환율 1,484.59원\n수량 1.071309주'
+    );
+    expect(p.symbol).toBe('알파벳 A');
+    expect(p.confident.symbol).toBe(true);
+    expect(p.side).toBe('buy');
+    expect(p.qty).toBe(1.071309);
+    expect(p.price).toBe(Math.round(506985 / 1.071309)); // 계산값
+    expect(p.confident.price).toBe(false); // 계산값은 확신 낮음
+    expect(p.date).toBe('2026-07-23');
+    expect(p.time).toBe('23:18');
+  });
+
+  it('토스증권형 판매: "테슬라 판매" → 매도', () => {
+    const p = parseTradeText('테슬라 판매\n판매 완료\n판매 금액 1,152,300원\n수량 2.5주');
+    expect(p.symbol).toBe('테슬라');
+    expect(p.side).toBe('sell');
+    expect(p.qty).toBe(2.5);
+    expect(p.price).toBe(Math.round(1152300 / 2.5));
+  });
+
+  it('구매·판매 둘 다 있으면 구분 확신 없음', () => {
+    const p = parseTradeText('구매 취소 후 판매 완료');
+    expect(p.side).toBeUndefined();
+  });
+
+  it('날짜 형식 변형: "2026-07-23", "2026/7/3"', () => {
+    expect(parseTradeText('체결 2026-07-23').date).toBe('2026-07-23');
+    expect(parseTradeText('체결 2026/7/3').date).toBe('2026-07-03');
+    expect(parseTradeText('숫자없음').date).toBeUndefined();
+  });
+
   it('빈 문자열 안전', () => {
     const p = parseTradeText('');
-    expect(p.confident).toEqual({ symbol: false, side: false, price: false, qty: false });
+    expect(p.confident).toEqual({ symbol: false, side: false, price: false, qty: false, date: false });
   });
 });

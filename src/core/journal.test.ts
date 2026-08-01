@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeStats,
-  extractCandidates,
   formatPnlHeadline,
+  formatQty,
   formatSigned,
   isValidTrade,
   monthReturnRate,
@@ -153,19 +153,28 @@ describe('isValidTrade / format', () => {
   });
 });
 
-describe('extractCandidates (OCR 칩 후보)', () => {
-  it('콤마 숫자·일반 숫자를 중복 없이 등장 순서로 뽑는다', () => {
-    const c = extractCandidates('삼성전자 매수 체결 72,000원 10주 72,000 합계 720,000');
-    expect(c.numbers).toEqual([72000, 10, 720000]);
-    expect(c.names).toContain('삼성전자');
+describe('소수점 주식', () => {
+  it('소수 수량 매매도 평균단가·실현손익이 계산된다', () => {
+    const s = computeStats([
+      t({ symbol: 'AAPL', side: 'buy', price: 473240, qty: 1.071309, date: '2026-07-23' }),
+      t({ symbol: 'AAPL', side: 'sell', price: 500000, qty: 1.071309, date: '2026-07-30' }),
+    ]);
+    expect(s.totalRealized).toBe(Math.round((500000 - 473240) * 1.071309));
+    expect(s.bySymbol[0].holdingQty).toBe(0); // 부동소수점 잔여치 없이 전량 청산
   });
 
-  it('명세서 상용어는 종목명 후보에서 제외한다', () => {
-    const c = extractCandidates('매수 체결 수량 단가 SK하이닉스');
-    expect(c.names).toEqual(['SK', '하이닉스']);
+  it('소수 수량 부분매도 후 잔여 수량', () => {
+    const s = computeStats([
+      t({ symbol: 'A', side: 'buy', price: 1000, qty: 2.5, date: '2026-07-01' }),
+      t({ symbol: 'A', side: 'sell', price: 1200, qty: 1.5, date: '2026-07-02' }),
+    ]);
+    expect(s.bySymbol[0].holdingQty).toBeCloseTo(1);
+    expect(s.totalRealized).toBe(300);
   });
 
-  it('빈 텍스트면 빈 후보', () => {
-    expect(extractCandidates('')).toEqual({ numbers: [], names: [] });
+  it('formatQty: 소수 6자리까지, 정수는 콤마 표기', () => {
+    expect(formatQty(1.071309)).toBe('1.071309');
+    expect(formatQty(1000)).toBe('1,000');
+    expect(formatQty(2.5)).toBe('2.5');
   });
 });

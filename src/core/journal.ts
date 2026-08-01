@@ -99,7 +99,11 @@ export function computeStats(trades: Trade[]): JournalStats {
       if (pnl > 0) p.stat.winCount += 1;
       p.cost -= avg * sellQty;
       p.qty -= sellQty;
-      if (p.qty === 0) p.cost = 0;
+      // 소수점 주식 부동소수점 잔여치 방어
+      if (p.qty < 1e-9) {
+        p.qty = 0;
+        p.cost = 0;
+      }
       const month = t.date.slice(0, 7);
       const m = monthMap.get(month) ?? { realized: 0, costBasis: 0 };
       m.realized += pnl;
@@ -167,41 +171,7 @@ export function formatPnlHeadline(n: number): string {
   return formatSigned(n);
 }
 
-/**
- * OCR 텍스트에서 골라 넣기 칩 후보 추출.
- * - 숫자 후보: 콤마 포함 숫자(1 이상), 중복 제거, 등장 순서 유지, 최대 12개
- * - 종목명 후보: 한글 2자 이상 또는 영대문자 2자 이상 토큰, 흔한 명세서 단어 제외, 최대 8개
- */
-const NOISE_WORDS = new Set([
-  '매수', '매도', '체결', '주문', '수량', '단가', '가격', '금액', '체결가', '체결량',
-  '주식', '현금', '계좌', '잔고', '수수료', '세금', '정정', '취소', '접수', '완료',
-  'KRW', 'BUY', 'SELL',
-]);
-
-export interface OcrCandidates {
-  numbers: number[];
-  names: string[];
-}
-
-export function extractCandidates(text: string): OcrCandidates {
-  const numbers: number[] = [];
-  const seen = new Set<number>();
-  for (const m of text.matchAll(/\d{1,3}(?:,\d{3})+|\d+/g)) {
-    const n = Number(m[0].replace(/,/g, ''));
-    if (!Number.isFinite(n) || n <= 0 || n > 1_000_000_000) continue;
-    if (seen.has(n)) continue;
-    seen.add(n);
-    numbers.push(n);
-    if (numbers.length >= 12) break;
-  }
-  const names: string[] = [];
-  const nameSeen = new Set<string>();
-  for (const m of text.matchAll(/[가-힣]{2,10}|[A-Z]{2,6}/g)) {
-    const w = m[0];
-    if (NOISE_WORDS.has(w) || nameSeen.has(w)) continue;
-    nameSeen.add(w);
-    names.push(w);
-    if (names.length >= 8) break;
-  }
-  return { numbers, names };
+/** 수량 표기: 소수점 주식은 소수 6자리까지 */
+export function formatQty(n: number): string {
+  return n.toLocaleString('ko-KR', { maximumFractionDigits: 6 });
 }

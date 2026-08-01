@@ -72,6 +72,44 @@ const samsungFixture = ({ symbol, sideKo, price, qty }) => page(`
     </div>
   </div>`, `'Batang','Malgun Gothic',serif`);
 
+/** 토스증권 실화면 구조: "{종목명} 구매|판매" 제목 + 금액/환율/소수 수량 (단가 라벨 없음 → 금액÷수량 계산) */
+const tossSecFixture = ({ symbol, sideKo2, amount, qty, usd }) => page(`
+  <div style="padding:30px 24px">
+    <div style="font-size:34px;font-weight:800">${symbol} ${sideKo2}</div>
+    <div style="font-size:23px;color:#6b7684;margin-top:12px">${sideKo2} 완료</div>
+    <div style="font-size:22px;color:#8b95a1;margin-top:6px">2026.7.23 23:18</div>
+    <div style="margin-top:36px;border-top:2px solid #f2f4f6;padding-top:26px;font-size:26px;line-height:2.1">
+      <div style="display:flex;justify-content:space-between"><span style="color:#6b7684">${sideKo2} 금액</span>
+        <span style="text-align:right;font-weight:700">${amount.toLocaleString('ko-KR')}원<br/><span style="font-size:21px;color:#8b95a1;font-weight:400">$${usd}</span></span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:#6b7684">적용 환율</span><span style="font-weight:700">1,484.59원</span></div>
+      <div style="display:flex;justify-content:space-between"><span style="color:#6b7684">수량</span><span style="font-weight:700">${qty}주</span></div>
+    </div>
+  </div>`, `'Malgun Gothic','Apple SD Gothic Neo',sans-serif`);
+
+/** 미래에셋 m.Stock 스타일: 체결단가/체결수량 표 */
+const miraeFixture = ({ symbol, sideKo, price, qty }) => page(`
+  <div style="padding:24px 18px">
+    <div style="font-size:26px;font-weight:800;border-bottom:3px solid #f05a1e;padding-bottom:12px">체결내역 조회</div>
+    <div style="font-size:25px;line-height:2.3;margin-top:18px">
+      <div><span style="display:inline-block;width:150px;color:#777">종목명</span><strong>${symbol}</strong></div>
+      <div><span style="display:inline-block;width:150px;color:#777">매매구분</span><strong style="color:${sideKo === '매수' ? '#d93025' : '#1a63d6'}">${sideKo}</strong></div>
+      <div><span style="display:inline-block;width:150px;color:#777">체결단가</span><strong>${price.toLocaleString('ko-KR')}원</strong></div>
+      <div><span style="display:inline-block;width:150px;color:#777">체결수량</span><strong>${qty}주</strong></div>
+    </div>
+  </div>`, `'Malgun Gothic',sans-serif`);
+
+/** NH나무 스타일: 주문체결 리스트형 */
+const nhFixture = ({ symbol, sideKo, price, qty }) => page(`
+  <div style="padding:24px 18px">
+    <div style="font-size:24px;font-weight:700;color:#0b7a3e">주문체결</div>
+    <div style="border:2px solid #dfe5ec;border-radius:12px;padding:20px;margin-top:16px;font-size:26px;line-height:1.9">
+      <div style="font-weight:800">${symbol}</div>
+      <div style="color:${sideKo === '매수' ? '#d93025' : '#1a63d6'};font-weight:700">${sideKo}체결</div>
+      <div>체결가격 ${price.toLocaleString('ko-KR')}원</div>
+      <div>체결수량 ${qty}주</div>
+    </div>
+  </div>`, `'Malgun Gothic',sans-serif`);
+
 const CASES = [
   { name: 'toss-buy', html: tossFixture, symbol: '삼성전자', side: 'buy', sideKo: '매수', price: 72400, qty: 10 },
   { name: 'toss-sell', html: tossFixture, symbol: '삼성전자', side: 'sell', sideKo: '매도', price: 75800, qty: 7 },
@@ -79,6 +117,12 @@ const CASES = [
   { name: 'kiwoom-sell', html: kiwoomFixture, symbol: 'SK하이닉스', side: 'sell', sideKo: '매도', price: 228000, qty: 2 },
   { name: 'samsung-buy', html: samsungFixture, symbol: '카카오', side: 'buy', sideKo: '매수', price: 48550, qty: 20 },
   { name: 'samsung-sell', html: samsungFixture, symbol: '카카오', side: 'sell', sideKo: '매도', price: 51200, qty: 15 },
+  { name: 'tosssec-buy', html: tossSecFixture, symbol: '알파벳 A', side: 'buy', sideKo2: '구매', amount: 506985, usd: '341.49', qty: 1.071309, price: Math.round(506985 / 1.071309) },
+  { name: 'tosssec-sell', html: tossSecFixture, symbol: '테슬라', side: 'sell', sideKo2: '판매', amount: 1152300, usd: '776.20', qty: 2.5, price: Math.round(1152300 / 2.5) },
+  { name: 'mirae-buy', html: miraeFixture, symbol: '현대차', side: 'buy', sideKo: '매수', price: 245500, qty: 4 },
+  { name: 'mirae-sell', html: miraeFixture, symbol: 'LG에너지솔루션', side: 'sell', sideKo: '매도', price: 398000, qty: 1 },
+  { name: 'nh-buy', html: nhFixture, symbol: '삼성바이오로직스', side: 'buy', sideKo: '매수', price: 812000, qty: 2 },
+  { name: 'nh-sell', html: nhFixture, symbol: '에코프로', side: 'sell', sideKo: '매도', price: 91800, qty: 12 },
 ];
 
 // ---- 3) 렌더 ----
@@ -132,8 +176,9 @@ for (const c of CASES) {
 await worker.terminate();
 
 console.table(rows);
-console.log(`정확도 — 종목명 ${score.symbol}/6, 구분 ${score.side}/6, 단가 ${score.price}/6, 수량 ${score.qty}/6`);
+const N = CASES.length;
+console.log(`정확도 — 종목명 ${score.symbol}/${N}, 구분 ${score.side}/${N}, 단가 ${score.price}/${N}, 수량 ${score.qty}/${N}`);
 
-const pass = score.price === 6 && score.qty === 6 && score.symbol >= 4;
-console.log(pass ? 'OCR ACCURACY PASS' : 'OCR ACCURACY FAIL (기준: 단가 6/6, 수량 6/6, 종목명 ≥4/6)');
+const pass = score.side === N && score.qty === N && score.price >= N - 1 && score.symbol >= 8;
+console.log(pass ? 'OCR ACCURACY PASS' : `OCR ACCURACY FAIL (기준: 구분 ${N}/${N}, 수량 ${N}/${N}, 단가 ≥${N - 1}/${N}, 종목명 ≥8/${N})`);
 process.exit(pass ? 0 : 1);
