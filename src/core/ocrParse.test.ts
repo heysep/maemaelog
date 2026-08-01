@@ -22,7 +22,7 @@ describe('parseTradeText — 증권앱 체결내역 패턴', () => {
   it('알림형: "[체결] SK하이닉스 3주 231,000원 매도"', () => {
     const p = parseTradeText('[체결] SK하이닉스 3주 231,000원 매도');
     expect(p.side).toBe('sell');
-    expect(p.symbol).toBe('SK');
+    expect(p.symbol).toBe('SK하이닉스');
     expect(p.price).toBe(231000);
     expect(p.qty).toBe(3);
   });
@@ -62,6 +62,23 @@ describe('parseTradeText — 증권앱 체결내역 패턴', () => {
     expect(p.price).toBeUndefined();
     expect(p.qty).toBeUndefined();
     expect(p.side).toBeUndefined();
+  });
+
+  it('OCR 체→제 혼동: "제결가/제결량"도 라벨로 인식한다', () => {
+    const p = parseTradeText('하이닉스 매도\n제결가 228,000\n제결량 2');
+    expect(p.price).toBe(228000);
+    expect(p.qty).toBe(2);
+  });
+
+  it('수량 라벨이 깨져도 숫자만 남은 줄에서 수량을 건진다(확신 낮음)', () => {
+    const p = parseTradeText('하이닉스 매수\n제결가 231,500\nMZ E   3\n통화 KRW');
+    expect(p.qty).toBe(3);
+    expect(p.confident.qty).toBe(false);
+  });
+
+  it('숫자 사이 공백 낀 쉼표를 정규화한다("72, 400원")', () => {
+    const p = parseTradeText('삼성전자 매수 단가 72, 400원 수량 10주');
+    expect(p.price).toBe(72400);
   });
 
   it('빈 문자열 안전', () => {

@@ -30,7 +30,15 @@ function toNum(s: string): number {
   return Number(s.replace(/,/g, ''));
 }
 
-export function parseTradeText(text: string): ParsedTrade {
+/** OCR 흔들림 정규화: 숫자 사이 공백 낀 쉼표("72, 400")·쉼표 대신 마침표("72.400원") 보정 */
+export function normalizeOcrText(raw: string): string {
+  return raw
+    .replace(/(\d)\s*,\s*(\d)/g, '$1,$2')
+    .replace(/(\d)\.(\d{3})(?=\D|$)/g, '$1,$2');
+}
+
+export function parseTradeText(rawText: string): ParsedTrade {
+  const text = normalizeOcrText(rawText);
   const result: ParsedTrade = { confident: { symbol: false, side: false, price: false, qty: false } };
 
   // ---- 매수/매도 ----
@@ -41,8 +49,8 @@ export function parseTradeText(text: string): ParsedTrade {
     result.confident.side = true;
   }
 
-  // ---- 단가: "단가/체결가/가격" 근처 숫자 ----
-  const priceMatch = /(?:체결\s*단가|체결가|단가|가격)\s*[:\s]*([\d,]+)\s*원?/.exec(text);
+  // ---- 단가: "단가/체결가/가격" 근처 숫자. OCR이 '체'를 '제'로 읽는 혼동([체제]) 허용 ----
+  const priceMatch = /(?:[체제]결\s*단가|[체제]결가|단가|가격)\s*[:\s]*([\d,]+)\s*원?/.exec(text);
   if (priceMatch) {
     const n = toNum(priceMatch[1]);
     if (Number.isFinite(n) && n > 0) {
@@ -52,7 +60,8 @@ export function parseTradeText(text: string): ParsedTrade {
   }
 
   // ---- 수량: "수량 N" 또는 "N주" ----
-  const qtyMatch = /(?:체결\s*수량|수량)\s*[:\s]*([\d,]+)\s*주?/.exec(text) ?? /([\d,]+)\s*주(?!문|식|간)/.exec(text);
+  const qtyMatch =
+    /(?:[체제]결\s*수량|[체제]결량|수량)\s*[:\s]*([\d,]+)\s*주?/.exec(text) ?? /([\d,]+)\s*주(?!문|식|간)/.exec(text);
   if (qtyMatch) {
     const n = toNum(qtyMatch[1]);
     if (Number.isFinite(n) && n > 0 && n < 1_000_000) {
@@ -76,6 +85,19 @@ export function parseTradeText(text: string): ParsedTrade {
     }
   }
 
+  // ---- 보정: 수량 라벨이 OCR로 깨졌을 때(예: "MZ E  3") 숫자만 남은 줄에서 수량 추출 ----
+  if (result.qty === undefined) {
+    for (const line of text.split('\n')) {
+      const m = /^\D*?(\d{1,5})\s*$/.exec(line);
+      if (!m) continue;
+      const n = toNum(m[1]);
+      if (n > 0 && n !== result.price) {
+        result.qty = n; // 라벨 없는 추출 — 확신 낮음(confident 유지)
+        break;
+      }
+    }
+  }
+
   // ---- 종목명: 한글 2~10자 또는 영대문자 토큰 중 상용어 제외 첫 후보 ----
   // "종목명 XXX" 라벨이 있으면 그 값을 확신으로 사용
   const labeled = /종목(?:명)?\s*[:\s]*([가-힣A-Za-z0-9&]{2,15})/.exec(text);
@@ -88,7 +110,8 @@ export function parseTradeText(text: string): ParsedTrade {
       /체결\s*단가|체결\s*수량|체결가|체결량|종목명|종목|매수|매도|체결|주문|접수|완료|안내|알림|내역|수량|단가|가격|금액|주식|증권|계좌|잔고|수수료|세금|정정|취소|지정가|시장가/g,
       ' '
     );
-    for (const m of stripped.matchAll(/[가-힣]{2,10}|[A-Z]{2,6}/g)) {
+    // 혼합 표기(SK하이닉스, LG에너지솔루션)를 한 토큰으로 잡는다
+    for (const m of stripped.matchAll(/[A-Z]{1,6}[가-힣]{2,10}|[가-힣]{2,10}|[A-Z]{2,6}/g)) {
       if (NOISE_WORDS.has(m[0])) continue;
       result.symbol = m[0];
       break;
