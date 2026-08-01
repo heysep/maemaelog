@@ -117,7 +117,7 @@ try {
   await wait(600);
   ok(await page.$('.ocr-thumb') !== null, '썸네일 미리보기 표시');
   // 이미지 선택 즉시 OCR 자동 시작 → (차단 환경) 우아한 실패 → 수동 입력으로 계속
-  ok((await text(page)).includes('인식하지 못했어요'), 'OCR 실패 시 안내 후 수동 입력 유지');
+  ok((await text(page)).includes('인식 엔진을 불러오지 못했어요'), 'OCR 실패 시 단계별 안내 후 수동 입력 유지');
   await setInput(page, '#f-symbol', '테스트종목');
   await setInput(page, '#f-price', '1000');
   await setInput(page, '#f-qty', '1');
@@ -169,6 +169,51 @@ try {
   });
   await page.reload({ waitUntil: 'networkidle0' }); await wait(200);
   ok((await text(page)).includes('첫 매매를 기록해보세요'), '손상 데이터 → 초기 상태 복구');
+
+  // ---- 오프라인 OCR: 외부 네트워크 전면 차단 상태에서 번들 자산만으로 인식 성공 (CDN 제거 검증) ----
+  const fxPage = await browser.newPage();
+  await fxPage.setViewport({ width: 390, height: 500, deviceScaleFactor: 2 });
+  await fxPage.setContent(`<!doctype html><meta charset="utf-8"><body style="margin:0;background:#fff;color:#191f28;font-family:'Malgun Gothic',sans-serif">
+    <div style="padding:24px">
+      <div style="font-size:30px;font-weight:800">삼성전자 매수 체결</div>
+      <div style="font-size:28px;margin-top:28px">체결단가 72,400 원</div>
+      <div style="font-size:28px;margin-top:16px">체결수량 10 주</div>
+    </div></body>`);
+  const fxPath = join(dir, 'fixture.png');
+  await fxPage.screenshot({ path: fxPath });
+  await fxPage.close();
+
+  const page2 = await browser.newPage();
+  await page2.setViewport({ width: 390, height: 844 });
+  await page2.setRequestInterception(true);
+  const externalReqs = [];
+  page2.on('request', (req) => {
+    const u = req.url();
+    if (u.startsWith(BASE) || u.startsWith('data:') || u.startsWith('blob:')) req.continue();
+    else { externalReqs.push(u); req.abort(); }
+  });
+  await page2.goto(BASE, { waitUntil: 'networkidle0' });
+  await clickTab(page2, '입력'); await wait(300);
+  const fileInput2 = await page2.$('#f-image');
+  await fileInput2.uploadFile(fxPath);
+  let ocrDone = false;
+  for (let i = 0; i < 120 && !ocrDone; i++) {
+    const t = await page2.evaluate(() => document.body.innerText);
+    if (t.includes('자동으로 채웠어요') || t.includes('직접 입력해 주세요')) ocrDone = true;
+    else await wait(500);
+  }
+  ok(ocrDone, '오프라인 OCR 완료(60s 내)');
+  ok((await page2.evaluate(() => document.body.innerText)).includes('자동으로 채웠어요'), '오프라인 OCR 인식 성공');
+  const vals = await page2.evaluate(() => ({
+    symbol: document.querySelector('#f-symbol').value,
+    price: document.querySelector('#f-price').value,
+    qty: document.querySelector('#f-qty').value,
+  }));
+  ok(vals.symbol === '삼성전자', `오프라인 OCR 종목명 자동 채움 (${vals.symbol})`);
+  ok(vals.price === '72400', `오프라인 OCR 단가 자동 채움 (${vals.price})`);
+  ok(vals.qty === '10', `오프라인 OCR 수량 자동 채움 (${vals.qty})`);
+  ok(externalReqs.length === 0, '외부 네트워크 요청 0건' + (externalReqs.length ? ' — ' + externalReqs[0] : ''));
+  await page2.close();
 
   // ---- 금지 문자열/콘솔 에러 ----
   for (const nm of ['홈', '입력', '통계', '내정보']) {

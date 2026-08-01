@@ -139,13 +139,16 @@ for (const c of CASES) {
 await browser.close();
 
 // ---- 4) OCR (CDN 언어 데이터 — 실패 시 1회 재시도) ----
+// CDN 금지 — 번들 동봉 tessdata_fast 로컬 자산으로만 로드
 const { createWorker } = await import('tesseract.js');
+const { resolve } = await import('node:path');
+const LOCAL_OPTS = { langPath: resolve('public/ocr/lang'), gzip: true, cacheMethod: 'none' };
 async function makeWorker() {
   try {
-    return await createWorker(['kor', 'eng']);
+    return await createWorker(['kor', 'eng'], undefined, LOCAL_OPTS);
   } catch (e) {
     console.error('worker 생성 실패, 재시도:', e?.message ?? e);
-    return await createWorker(['kor', 'eng']);
+    return await createWorker(['kor', 'eng'], undefined, LOCAL_OPTS);
   }
 }
 const worker = await makeWorker();

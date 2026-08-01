@@ -38,7 +38,7 @@ import {
 } from './iap/entitlements';
 import { entKeyForSku, PRODUCTS } from './iap/products';
 import { ensureIapModule, isIapSupported, purchase } from './iap/purchase';
-import { makeThumbnail, recognizeImage, warmupOcr } from './ocr/ocr';
+import { makeThumbnail, recognizeImage, warmupOcr, type OcrError } from './ocr/ocr';
 import { showRewardedAd } from './ads/rewarded';
 import { BannerAd } from './ads/BannerAd';
 import { AD_GROUP_ID, REWARDED_AD_ID } from './ads/config';
@@ -76,6 +76,7 @@ export function App() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [ocrState, setOcrState] = useState<OcrState>('idle');
   const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrError, setOcrError] = useState<OcrError | null>(null);
   const [parsedPreview, setParsedPreview] = useState<ParsedTrade | null>(null);
 
   // ---- 목록/통계 ----
@@ -200,12 +201,14 @@ export function App() {
   const runOcr = async (file: File) => {
     setOcrState('running');
     setOcrProgress(0);
-    const text = await recognizeImage(file, (p) => setOcrProgress(p));
-    if (text === null) {
+    setOcrError(null);
+    const result = await recognizeImage(file, (p) => setOcrProgress(p));
+    if (!result.ok) {
+      setOcrError(result.error);
       setOcrState('failed');
       return;
     }
-    const parsed = parseTradeText(text);
+    const parsed = parseTradeText(result.text);
     if (parsed.symbol !== undefined) setSymbol(parsed.symbol);
     if (parsed.side !== undefined) setSide(parsed.side);
     if (parsed.price !== undefined) setPrice(String(parsed.price));
@@ -215,6 +218,7 @@ export function App() {
     const anyFilled =
       parsed.symbol !== undefined || parsed.price !== undefined || parsed.qty !== undefined || parsed.side !== undefined;
     if (!anyFilled) {
+      setOcrError('image');
       setOcrState('failed');
       return;
     }
@@ -553,7 +557,15 @@ export function App() {
               </p>
             )}
             {ocrState === 'failed' && (
-              <p className="ocr-status ocr-fail">인식하지 못했어요. 네트워크를 확인하거나 직접 입력해 주세요.</p>
+              <p className="ocr-status ocr-fail">
+                {ocrError === 'unsupported'
+                  ? '이 환경에서는 문자 인식이 지원되지 않아요. 직접 입력해 주세요.'
+                  : ocrError === 'image'
+                    ? '이미지를 읽지 못했어요. JPG·PNG 스크린샷으로 다시 시도하거나 직접 입력해 주세요.'
+                    : ocrError === 'timeout'
+                      ? '인식이 너무 오래 걸려 중단했어요. 다시 시도하거나 직접 입력해 주세요.'
+                      : '인식 엔진을 불러오지 못했어요. 잠시 후 다시 시도하거나 직접 입력해 주세요.'}
+              </p>
             )}
             {ocrState === 'done' && parsedPreview !== null && (
               <div className="gate-sheet ocr-confirm">
