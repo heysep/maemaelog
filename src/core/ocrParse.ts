@@ -66,18 +66,41 @@ export function parseTradeText(rawText: string): ParsedTrade {
     result.confident.side = true;
   }
 
-  // ---- 날짜/시각: "2026.7.23 23:18", "2026-07-23", "2026/7/23" ----
-  const dm = /(\d{4})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})/.exec(text);
-  if (dm) {
-    const y = Number(dm[1]);
-    const mo = Number(dm[2]);
-    const d = Number(dm[3]);
-    if (y >= 2000 && y <= 2100 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
-      result.date = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      result.confident.date = true;
-      const tm = /(\d{1,2}):(\d{2})/.exec(text.slice(dm.index));
-      if (tm && Number(tm[1]) <= 23 && Number(tm[2]) <= 59) {
-        result.time = `${tm[1].padStart(2, '0')}:${tm[2]}`;
+  // ---- 날짜/시각: 구분자·공백 흔들림 허용 ----
+  // "2026.7.23", "2026-07-23", "2026/7/23", "2026, 7, 23", "2026 7 23", "20267.23", "2026723"
+  const setDate = (y: number, mo: number, d: number, from: number): boolean => {
+    if (!(y >= 2000 && y <= 2100 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return false;
+    result.date = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    result.confident.date = true;
+    const tm = /(\d{1,2}):(\d{2})/.exec(text.slice(from));
+    if (tm && Number(tm[1]) <= 23 && Number(tm[2]) <= 59) {
+      result.time = `${tm[1].padStart(2, '0')}:${tm[2]}`;
+    }
+    return true;
+  };
+  {
+    let found = false;
+    // 1) 구두점 구분자 (앞뒤 공백 허용)
+    for (const m of text.matchAll(/(\d{4})\s*[.\-/,]\s*(\d{1,2})\s*[.\-/,]\s*(\d{1,2})/g)) {
+      if (setDate(Number(m[1]), Number(m[2]), Number(m[3]), m.index)) { found = true; break; }
+    }
+    // 2) 공백만 구분자 ("2026 7 23")
+    if (!found) {
+      for (const m of text.matchAll(/(\d{4})\s+(\d{1,2})\s+(\d{1,2})(?!\d)/g)) {
+        if (setDate(Number(m[1]), Number(m[2]), Number(m[3]), m.index)) { found = true; break; }
+      }
+    }
+    // 3) 구분자 소실 ("2026723", "20267.23") — 연도 20xx 고정 후 월/일 분해
+    if (!found) {
+      for (const m of text.matchAll(/\b(20\d{2})\s*[.\-/,]?\s*(\d{1,2})\s*[.\-/,]?\s*(\d{2})\b/g)) {
+        if (setDate(Number(m[1]), Number(m[2]), Number(m[3]), m.index)) { found = true; break; }
+      }
+    }
+    if (!found) {
+      for (const m of text.matchAll(/\b(20\d{2})(\d{3,4})\b/g)) {
+        const rest = m[2];
+        const [mo, d] = rest.length === 3 ? [Number(rest[0]), Number(rest.slice(1))] : [Number(rest.slice(0, 2)), Number(rest.slice(2))];
+        if (setDate(Number(m[1]), mo, d, m.index)) break;
       }
     }
   }
@@ -105,9 +128,13 @@ export function parseTradeText(rawText: string): ParsedTrade {
   }
 
   // ---- 토스증권형 보정: 단가 라벨 없음 → 단가 = 금액(원) ÷ 수량 (계산값 — 확신 낮음) ----
-  if (result.price === undefined) {
-    const amountMatch = new RegExp(`(?:구매|판매|매수|매도|주문|[체제]결)?\\s*금액\\s*[:\\s]*(${NUM})\\s*원`).exec(text);
-    if (amountMatch && result.qty !== undefined && result.qty > 0) {
+  if (result.price === undefined && result.qty !== undefined && result.qty > 0) {
+    // "원"이 "윈/월/앤" 등으로 오독되는 경우 허용, 라벨-값이 줄로 갈라져도 \s가 개행을 넘는다
+    const amountMatch =
+      new RegExp(`(?:구매|판매|매수|매도|주문|[체제]결)?\\s*금액\\s*[:\\s]*(${NUM})\\s*[원윈월앤]`).exec(text) ??
+      // 통화 글자가 아예 소실됐어도 콤마 숫자(천 단위 이상)면 후보
+      /금액\s*[:\s]*(\d{1,3}(?:,\d{3})+)/.exec(text);
+    if (amountMatch) {
       const amount = toNum(amountMatch[1]);
       if (Number.isFinite(amount) && amount > 0) {
         result.price = Math.round(amount / result.qty);
@@ -129,6 +156,16 @@ export function parseTradeText(rawText: string): ParsedTrade {
       if (result.qty === undefined && q > 0 && q < 1_000_000) result.qty = q;
       // 라벨 없는 추출은 확신 낮음 → confident 유지(false)
     }
+  }
+
+  // ---- 단가 최후 폴백: 금액 라인을 못 찾으면 화면에서 가장 큰 콤마 숫자를 금액으로 (확신 최저) ----
+  if (result.price === undefined && result.qty !== undefined && result.qty > 0) {
+    let best = 0;
+    for (const m of text.matchAll(/\d{1,3}(?:,\d{3})+/g)) {
+      const n = toNum(m[0]);
+      if (Number.isFinite(n) && n > best) best = n;
+    }
+    if (best >= 1000) result.price = Math.round(best / result.qty);
   }
 
   // ---- 보정: 수량 라벨이 OCR로 깨졌을 때(예: "MZ E  3") 숫자만 남은 줄에서 수량 추출 ----

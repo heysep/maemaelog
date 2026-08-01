@@ -77,6 +77,8 @@ export function App() {
   const [ocrState, setOcrState] = useState<OcrState>('idle');
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrError, setOcrError] = useState<OcrError | null>(null);
+  const [ocrRawText, setOcrRawText] = useState('');
+  const [copied, setCopied] = useState(false);
   const [parsedPreview, setParsedPreview] = useState<ParsedTrade | null>(null);
 
   // ---- 목록/통계 ----
@@ -189,6 +191,31 @@ export function App() {
   const addTrade = () => saveTrade(effFromState());
   const quickAdd = () => saveTrade(effFromPreview(parsedPreview));
 
+  /** 인식 원문 복사 — 인식 품질 확인·문의용 */
+  const copyRawText = async () => {
+    if (ocrRawText === '') return;
+    let done = false;
+    try {
+      await navigator.clipboard.writeText(ocrRawText);
+      done = true;
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = ocrRawText;
+        document.body.appendChild(ta);
+        ta.select();
+        done = document.execCommand('copy');
+        ta.remove();
+      } catch {
+        done = false;
+      }
+    }
+    if (done) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   const removeTrade = (id: string) => {
     persist(trades.filter((t) => t.id !== id));
     setReport(null);
@@ -232,6 +259,7 @@ export function App() {
       setOcrState('failed');
       return;
     }
+    setOcrRawText(result.text);
     const parsed = parseTradeText(result.text);
     if (parsed.symbol !== undefined) setSymbol(parsed.symbol);
     if (parsed.side !== undefined) setSide(parsed.side);
@@ -525,6 +553,9 @@ export function App() {
                   <span>날짜 <strong>{parsedPreview.date ?? date}</strong></span>
                 </div>
                 <button className="btn-primary" disabled={!isEffValid(effFromPreview(parsedPreview))} onClick={quickAdd}>바로 입력하기</button>
+                <button className="raw-copy" onClick={() => void copyRawText()}>
+                  {copied ? '복사됨' : '인식 원문 복사'}
+                </button>
               </div>
             )}
             <p className="ocr-note">사진을 고르면 바로 인식해 채워 드려요. 원본 이미지는 저장하지 않고, 512px 미리보기만 기록에 남아요.</p>

@@ -114,6 +114,7 @@ textarea.field-input { resize: vertical; min-height: 64px; }
 .notice { font-size: 13px; font-weight: 700; color: var(--red); }
 .ocr-preview { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--sub); }
 .ocr-preview strong { color: var(--text); font-weight: 800; }
+.raw-copy { min-height: 36px; font-size: 12px; color: var(--sub); text-decoration: underline; align-self: center; }
 
 .trade-item {
   display: flex; gap: 12px; align-items: flex-start;

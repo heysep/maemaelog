@@ -109,10 +109,33 @@ describe('parseTradeText — 증권앱 체결내역 패턴', () => {
     expect(p.side).toBeUndefined();
   });
 
-  it('날짜 형식 변형: "2026-07-23", "2026/7/3"', () => {
+  it('날짜 형식 변형: 구두점·콤마·공백 구분자', () => {
     expect(parseTradeText('체결 2026-07-23').date).toBe('2026-07-23');
     expect(parseTradeText('체결 2026/7/3').date).toBe('2026-07-03');
+    expect(parseTradeText('체결 2026, 7, 23').date).toBe('2026-07-23');
+    expect(parseTradeText('체결 2026 7 23').date).toBe('2026-07-23');
     expect(parseTradeText('숫자없음').date).toBeUndefined();
+  });
+
+  it('날짜 구분자 소실: "2026723", "20267.23" (시각 없이도 인정)', () => {
+    expect(parseTradeText('구매 완료\n2026723').date).toBe('2026-07-23');
+    expect(parseTradeText('구매 완료\n20267.23').date).toBe('2026-07-23');
+    expect(parseTradeText('구매 완료\n20261115').date).toBe('2026-11-15');
+  });
+
+  it('금액 라벨-값이 줄로 갈라져도, "원"이 "윈/월"로 오독돼도 단가를 계산한다', () => {
+    const split = parseTradeText('테슬라 구매\n구매 금액\n1,152,300원\n수량 2.5주');
+    expect(split.price).toBe(460920);
+    const misread = parseTradeText('테슬라 구매\n구매금액 1,152,300윈\n수량 2.5주');
+    expect(misread.price).toBe(460920);
+    const noCurrency = parseTradeText('테슬라 구매\n금액 1,152,300\n수량 2.5주');
+    expect(noCurrency.price).toBe(460920);
+  });
+
+  it('단가 최후 폴백: 금액 라벨이 전멸해도 가장 큰 콤마 숫자를 금액으로 쓴다', () => {
+    const p = parseTradeText('알파벳 구매\nOO 506,985 XX\n수량 1.071309주');
+    expect(p.price).toBe(Math.round(506985 / 1.071309));
+    expect(p.confident.price).toBe(false);
   });
 
   it('실기기 토스증권 화면 OCR 원문(상태바·헤더·진행단계 노이즈 포함) 전체 파싱', () => {

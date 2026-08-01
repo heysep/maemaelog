@@ -12,8 +12,8 @@
 export const THUMB_WIDTH = 512;
 /** localStorage 보호: 이 길이(약 1.5MB)를 넘는 dataURL은 첨부하지 않는다 */
 export const MAX_THUMB_DATAURL = 1_500_000;
-/** 인식 입력 정규화 최대 변 길이 */
-export const OCR_MAX_DIM = 1600;
+/** 인식 입력 정규화 최대 변 길이 (세로 폰 캡처 글자 크기 확보) */
+export const OCR_MAX_DIM = 2200;
 /** 엔진 로드/인식 타임아웃(ms) — 진행률 0%에서 방치되는 상태 방지 */
 export const OCR_INIT_TIMEOUT = 30_000;
 export const OCR_RECOGNIZE_TIMEOUT = 45_000;
@@ -54,12 +54,29 @@ export function isWorkerSupported(): boolean {
   }
 }
 
-/** 파일 → 이미지 로드 (HEIC 등 디코드 실패 시 null) */
-function loadImage(file: File): Promise<HTMLImageElement | null> {
+type Drawable = { source: HTMLImageElement | ImageBitmap; width: number; height: number; cleanup: () => void };
+
+/** 파일 → 그리기 가능한 이미지 로드. EXIF 회전을 반영(createImageBitmap imageOrientation) */
+async function loadDrawable(file: File): Promise<Drawable | null> {
+  // 1순위: createImageBitmap — EXIF 방향을 픽셀에 반영해 세로 사진 회전 문제 제거
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      return { source: bmp, width: bmp.width, height: bmp.height, cleanup: () => bmp.close() };
+    } catch {
+      // HEIC 등 미지원 → <img> 폴백
+    }
+  }
   return new Promise((resolve) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => resolve(img);
+    img.onload = () =>
+      resolve({
+        source: img,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        cleanup: () => URL.revokeObjectURL(url),
+      });
     img.onerror = () => {
       URL.revokeObjectURL(url);
       resolve(null);
@@ -68,17 +85,17 @@ function loadImage(file: File): Promise<HTMLImageElement | null> {
   });
 }
 
-function drawScaled(img: HTMLImageElement, maxDim: number, quality: number): string | null {
+function drawScaled(d: Drawable, maxDim: number, quality: number): string | null {
   try {
-    const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
-    const w = Math.max(1, Math.round(img.naturalWidth * scale));
-    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const scale = Math.min(1, maxDim / Math.max(d.width, d.height));
+    const w = Math.max(1, Math.round(d.width * scale));
+    const h = Math.max(1, Math.round(d.height * scale));
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    ctx.drawImage(img, 0, 0, w, h);
+    ctx.drawImage(d.source, 0, 0, w, h);
     return canvas.toDataURL('image/jpeg', quality);
   } catch {
     return null;
@@ -87,22 +104,25 @@ function drawScaled(img: HTMLImageElement, maxDim: number, quality: number): str
 
 /** 파일을 512px 폭 JPEG dataURL로 축소. 실패하거나 너무 크면 null. */
 export async function makeThumbnail(file: File): Promise<string | null> {
-  const img = await loadImage(file);
-  if (img === null) return null;
+  const d = await loadDrawable(file);
+  if (d === null) return null;
   // 폭 기준 512px — 세로가 더 길어도 폭이 512를 넘지 않게 최대 변을 환산
-  const maxDim = Math.round((THUMB_WIDTH / img.naturalWidth) * Math.max(img.naturalWidth, img.naturalHeight));
-  const dataUrl = drawScaled(img, Math.min(maxDim, Math.max(img.naturalWidth, img.naturalHeight)), 0.8);
-  URL.revokeObjectURL(img.src);
+  const maxDim = Math.min(
+    Math.round((THUMB_WIDTH / d.width) * Math.max(d.width, d.height)),
+    Math.max(d.width, d.height)
+  );
+  const dataUrl = drawScaled(d, maxDim, 0.8);
+  d.cleanup();
   if (dataUrl === null) return null;
   return dataUrl.length <= MAX_THUMB_DATAURL ? dataUrl : null;
 }
 
-/** 인식용 정규화: canvas로 최대 1600px JPEG dataURL (HEIC·대용량 대응) */
+/** 인식용 정규화: canvas로 최대 2200px JPEG dataURL (EXIF 회전·HEIC·대용량 대응) */
 export async function normalizeForOcr(file: File): Promise<string | null> {
-  const img = await loadImage(file);
-  if (img === null) return null;
-  const dataUrl = drawScaled(img, OCR_MAX_DIM, 0.92);
-  URL.revokeObjectURL(img.src);
+  const d = await loadDrawable(file);
+  if (d === null) return null;
+  const dataUrl = drawScaled(d, OCR_MAX_DIM, 0.92);
+  d.cleanup();
   return dataUrl;
 }
 

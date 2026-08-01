@@ -26,7 +26,7 @@ await p.goto(pathToFileURL(resolve(imgPath)).href);
 const normalized = await p.evaluate(async () => {
   const img = document.querySelector('img');
   await img.decode();
-  const MAX = 1600;
+  const MAX = 2200; // src/ocr/ocr.ts OCR_MAX_DIM과 동일하게 유지
   const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
   const c = document.createElement('canvas');
   c.width = Math.round(img.naturalWidth * scale);
