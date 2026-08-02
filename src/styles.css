@@ -21,7 +21,7 @@ body {
 button { font-family: inherit; border: none; background: none; cursor: pointer; color: inherit; }
 input, select, textarea { font-family: inherit; }
 
-.app { max-width: 480px; margin: 0 auto; padding: 24px 20px 96px; display: flex; flex-direction: column; gap: 16px; }
+.app { max-width: 480px; margin: 0 auto; min-height: 100dvh; padding: 24px 20px 96px; display: flex; flex-direction: column; gap: 16px; }
 .hdr { display: flex; align-items: center; gap: 10px; }
 .hdr-badge {
   width: 40px; height: 40px; border-radius: 12px; background: var(--navy); color: #fff;
@@ -199,7 +199,23 @@ textarea.field-input { resize: vertical; min-height: 64px; }
 .disclaimer { font-size: 12px; color: #93a3b5; line-height: 1.7; display: flex; gap: 8px; align-items: flex-start; }
 .disclaimer svg { flex-shrink: 0; margin-top: 1px; width: 16px; height: 16px; }
 
-.ad-banner { display: flex; flex-direction: column; gap: 4px; }
+.ad-banner {
+  position: sticky;
+  /* 떠 있는 하단 탭바(.tabs.bottom: 높이 54px + bottom 12px) 위에 붙인다 */
+  bottom: 66px;
+  z-index: 5;
+  display: flex; flex-direction: column; gap: 4px;
+  /* .app의 좌우 패딩을 상쇄해 화면 끝까지 채운다.
+     margin-top:auto — 페이지가 스크롤되지 않을 만큼 짧을 때 sticky는 배너를 아래로
+     밀지 못한다. 그때 auto가 바닥까지 밀고, 콘텐츠가 길면 0이 된다. */
+  /* margin-bottom -30px — .app의 padding-bottom(96px)이 auto 경로의 바닥이라
+     그대로 두면 배너가 탭바보다 30px 더 위에 선다(96 - bottom값 66). 스크롤이
+     있을 때의 sticky 위치와 어긋나지 않게 그 차이를 상쇄한다. */
+  margin: auto -20px -30px;
+  padding: 6px 20px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
 .ad-banner-label { font-size: 11px; color: #93a3b5; }
 
 @media (max-width: 340px) {

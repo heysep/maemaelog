@@ -666,8 +666,6 @@ export function App() {
             )}
           </section>
           )}
-
-          {!noAds && <BannerAd adGroupId={AD_GROUP_ID} />}
         </>
       )}
 
@@ -1279,6 +1277,9 @@ export function App() {
           {' '}모든 데이터는 이 기기에만 저장돼요.
         </span>
       </p>
+
+      {/* 배너는 sticky라 마지막에 와야 화면 하단에 붙는다 */}
+      {tab === 'home' && !noAds && <BannerAd adGroupId={AD_GROUP_ID} />}
     </div>
   );
 }
