@@ -16,6 +16,17 @@ describe('analyzeHabits', () => {
     expect(r.peakWeekday).toBeNull();
   });
 
+  it('요율을 넘기면 감정별 실현손익도 수수료·세금을 반영한다', () => {
+    const trades = [
+      t({ symbol: 'A', side: 'buy', price: 10000, qty: 10, date: '2026-01-01', emotion: '확신' }),
+      t({ symbol: 'A', side: 'sell', price: 10000, qty: 10, date: '2026-01-02', emotion: '확신' }),
+    ];
+    // 요율 없으면 동일가 매도는 손익 0
+    expect(analyzeHabits(trades).emotionStats[0].realized).toBe(0);
+    // 수수료 1% + 세금 1%: 원가 101,000 / 수령 98,000 → -3,000
+    expect(analyzeHabits(trades, { commissionPct: 1, sellTaxPct: 1 }).emotionStats[0].realized).toBe(-3000);
+  });
+
   it('감정 태그별 매도 손익·승률을 집계한다', () => {
     const r = analyzeHabits([
       t({ symbol: 'A', side: 'buy', price: 100, qty: 20, date: '2026-07-01', emotion: '확신' }),

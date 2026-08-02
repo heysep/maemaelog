@@ -47,7 +47,7 @@ export function buildStatsPayload(input: Trade[], rates: FeeRates = ZERO_FEES): 
   const rts = buildRoundTrips(trades, rates);
   const rtStats = computeRoundTripStats(rts);
   const rStats = computeRStats(rts);
-  const habits = analyzeHabits(trades);
+  const habits = analyzeHabits(trades, rates);
 
   const byEmotion = habits.emotionStats.map((e) => ({
     tag: e.emotion,

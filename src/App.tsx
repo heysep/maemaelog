@@ -73,6 +73,33 @@ function todayStr(): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
+/**
+ * 연속 기록 일수 — 주식시장이 닫는 토·일은 건너뛴다.
+ * 주말을 세면 월~금 성실히 기록한 사람이 월요일에 0일이 되어 버린다.
+ */
+function recordStreak(dates: Set<string>, today: string): number {
+  const key = (d: Date) => {
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  };
+  const stepBack = (d: Date) => {
+    do {
+      d.setDate(d.getDate() - 1);
+    } while (d.getDay() === 0 || d.getDay() === 6);
+  };
+  const base = new Date(`${today}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return 0;
+  // 주말이거나 오늘 아직 기록이 없으면 직전 거래일부터 센다(오늘 안 썼다고 끊긴 걸로 보지 않음)
+  if (base.getDay() === 0 || base.getDay() === 6 || !dates.has(today)) stepBack(base);
+  let n = 0;
+  while (dates.has(key(base)) && n < 999) {
+    n += 1;
+    stepBack(base);
+  }
+  return n;
+}
+
 export function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [trades, setTrades] = useState<Trade[]>(() => loadTrades());
@@ -381,13 +408,13 @@ export function App() {
       // 서버 불가(503/네트워크) → 규칙 엔진 폴백 + "오프라인 분석" 배지
       saveInsightCounter(consumeInsight(counter, todayKey));
       setAiReport(null);
-      setReport(analyzeHabits(trades));
+      setReport(analyzeHabits(trades, feeRates));
       setReportMode('offline');
       return;
     }
     saveInsightCounter(consumeInsight(counter, todayKey));
     setAiReport(null);
-    setReport(analyzeHabits(trades));
+    setReport(analyzeHabits(trades, feeRates));
     setReportMode('local');
   };
 
@@ -447,6 +474,20 @@ export function App() {
     [sortedDesc, filterSymbol]
   );
 
+  const streak = useMemo(
+    () => recordStreak(new Set(trades.map((t) => t.date)), todayKey),
+    [trades, todayKey]
+  );
+  const weekCount = useMemo(() => {
+    const from = new Date(`${todayKey}T00:00:00`);
+    from.setDate(from.getDate() - 6);
+    const mm = String(from.getMonth() + 1).padStart(2, '0');
+    const dd = String(from.getDate()).padStart(2, '0');
+    const fromKey = `${from.getFullYear()}-${mm}-${dd}`;
+    return trades.filter((t) => t.date >= fromKey && t.date <= todayKey).length;
+  }, [trades, todayKey]);
+  const feeLabel = feesOn ? '수수료·세금 반영' : '수수료·세금 미반영';
+
   const thisMonth = todayKey.slice(0, 7);
   const monthStat = stats.byMonth.find((m) => m.month === thisMonth) ?? { month: thisMonth, realized: 0, costBasis: 0 };
   const monthRate = monthReturnRate(monthStat);
@@ -502,9 +543,10 @@ export function App() {
 
       {tab === 'home' && (
         <>
+          {trades.length > 0 && (
           <section className="stat-hero">
             <div className="stat-hero-top">
-              <span className="stat-hero-label">{Number(thisMonth.slice(5, 7))}월 수익 (수수료·세금 미반영)</span>
+              <span className="stat-hero-label">누적 실현손익 ({feeLabel})</span>
               <button
                 className="hero-link"
                 onClick={() => { setStatsView('insight'); setTab('stats'); }}
@@ -512,23 +554,91 @@ export function App() {
                 분석 보기 ›
               </button>
             </div>
-            <span className={`stat-hero-value ${monthStat.realized > 0 ? 'up' : monthStat.realized < 0 ? 'down' : ''}`}>
-              {formatPnlHeadline(monthStat.realized)}
+            <span className={`stat-hero-value ${stats.totalRealized > 0 ? 'up' : stats.totalRealized < 0 ? 'down' : ''}`}>
+              {formatPnlHeadline(stats.totalRealized)}
             </span>
+            <div className="hero-kpi">
+              <div>
+                <span className="hero-kpi-label">승률</span>
+                <span className="hero-kpi-value">{rtStats.winRate === null ? '—' : `${rtStats.winRate}%`}</span>
+              </div>
+              <div>
+                <span className="hero-kpi-label">매매</span>
+                <span className="hero-kpi-value">{rtStats.closedCount}건</span>
+              </div>
+              <div>
+                <span className="hero-kpi-label">보유 중</span>
+                <span className="hero-kpi-value">{rtStats.openCount}건</span>
+              </div>
+            </div>
             <span className="stat-hero-sub">
-              총 {monthSells.total}건 · 수익 {monthSells.win}건 · 손실 {monthSells.loss}건
+              {rtStats.closedCount === 0
+                ? '매수와 매도를 모두 기록하면 승률과 손익이 계산돼요.'
+                : `이익 ${rtStats.winCount}건 · 손실 ${rtStats.lossCount}건 · 진입~청산 1건 기준`}
             </span>
-            <span className="stat-hero-sub">
-              수익률 {monthRate === null ? '—' : `${monthRate > 0 ? '+' : ''}${monthRate}%`} · 승률{' '}
-              {stats.winRate === null ? '—' : `${stats.winRate}%`}
-            </span>
+          </section>
+          )}
+
+          {trades.length > 0 && (
+          <div className="grid2">
+            <div className="mini-card">
+              <span className="mini-label">{Number(thisMonth.slice(5, 7))}월 실현손익</span>
+              <span className={`mini-value ${monthStat.realized > 0 ? 'up-txt' : monthStat.realized < 0 ? 'down-txt' : ''}`}>
+                {formatPnlHeadline(monthStat.realized)}
+              </span>
+              <span className="stat-sub">
+                {monthSells.total}건 청산 · 수익률 {monthRate === null ? '—' : `${monthRate > 0 ? '+' : ''}${monthRate}%`}
+              </span>
+            </div>
+            <div className="mini-card">
+              <span className="mini-label">연속 기록</span>
+              <span className="mini-value">{streak}일</span>
+              <span className="stat-sub">
+                {streak === 0 ? '오늘 한 건 남기면 1일부터 시작해요' : `최근 7일 ${weekCount}건`}
+              </span>
+            </div>
+          </div>
+          )}
+
+          <section className="panel">
+            <h2 className="panel-title"><IconPen size={18} />오늘 매매 빠르게 남기기</h2>
+            <div className="seg" role="group" aria-label="매수 매도 구분">
+              <button className={`seg-btn buy ${side === 'buy' ? 'on' : ''}`} onClick={() => setSide('buy')}>매수</button>
+              <button className={`seg-btn sell ${side === 'sell' ? 'on' : ''}`} onClick={() => setSide('sell')}>매도</button>
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="q-symbol">종목명</label>
+              <input id="q-symbol" className="field-input" value={symbol} placeholder="예: 삼성전자"
+                onChange={(e) => setSymbol(e.target.value)} />
+            </div>
+            <div className="row2">
+              <div className="field">
+                <label className="field-label" htmlFor="q-price">단가(원)</label>
+                <input id="q-price" className="field-input" inputMode="numeric" value={price} placeholder="72000"
+                  onChange={(e) => setPrice(e.target.value.replace(/[^\d]/g, ''))} />
+              </div>
+              <div className="field">
+                <label className="field-label" htmlFor="q-qty">수량(주)</label>
+                <input id="q-qty" className="field-input" inputMode="decimal" value={qty} placeholder="10"
+                  onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ''))} />
+              </div>
+            </div>
+            {notice !== '' && <p className="notice">{notice}</p>}
+            <button className="btn-primary" disabled={!canSave} onClick={addTrade}>
+              {todayKey} 기록 저장
+            </button>
+            <button className="btn-ghost" onClick={() => setTab('write')}>
+              스크린샷 자동 입력 · 감정·메모까지 남기기
+            </button>
           </section>
 
           {trades.length === 0 && (
-            <button className="panel empty-card" onClick={() => setTab('write')}>
-              <span className="empty-title">첫 매매를 기록해보세요</span>
-              <span className="empty-sub">기록 탭에서 오늘의 매매를 추가할 수 있어요</span>
-            </button>
+            <section className="panel empty-card">
+              <span className="empty-title">아직 기록이 없어요</span>
+              <span className="empty-sub">
+                종목·단가·수량 세 가지만 넣으면 바로 저장돼요. 매도까지 기록하면 승률과 손익이 자동으로 계산돼요.
+              </span>
+            </section>
           )}
 
           {trades.length > 0 && (
@@ -766,12 +876,14 @@ export function App() {
           <section className="panel">
             <h2 className="panel-title"><IconChart size={18} />매매 통계</h2>
             <div className="stat-hero">
-              <span className="stat-hero-label">실현손익 합계 (수수료·세금 미반영)</span>
+              <span className="stat-hero-label">실현손익 합계 ({feeLabel})</span>
               <span className={`stat-hero-value ${stats.totalRealized > 0 ? 'up' : stats.totalRealized < 0 ? 'down' : ''}`}>
                 {formatSigned(stats.totalRealized)}
               </span>
             </div>
-            <p className="fee-state">{feesOn ? '수수료·세금 반영' : '수수료·세금 미반영'}</p>
+            <p className="fee-state">
+              {feesOn ? '내 요율로 계산 중' : '내정보 탭에서 수수료·세율을 넣으면 실수령 기준으로 다시 계산돼요'}
+            </p>
             <div className="grid2">
               <div className="mini-card">
                 <span className="mini-label">승률</span>
@@ -877,14 +989,23 @@ export function App() {
             <div>
               <h3 className="field-label">월별 실현손익</h3>
               {stats.byMonth.length === 0 && <p className="empty">매도 기록이 생기면 월별로 정리돼요.</p>}
-              {stats.byMonth.map((m) => (
-                <div key={m.month} className="stat-row">
-                  <span className="stat-name">{m.month}</span>
-                  <span className={`stat-val ${m.realized > 0 ? 'up-txt' : m.realized < 0 ? 'down-txt' : ''}`}>
-                    {formatSigned(m.realized)}
-                  </span>
-                </div>
-              ))}
+              {stats.byMonth.map((m) => {
+                const rate = monthReturnRate(m);
+                return (
+                  <div key={m.month} className="stat-row">
+                    <div style={{ minWidth: 0 }}>
+                      <p className="stat-name">{m.month}</p>
+                      <p className="stat-sub">
+                        매도 원가 {formatWon(m.costBasis)} · 수익률{' '}
+                        {rate === null ? '—' : `${rate > 0 ? '+' : ''}${rate}%`}
+                      </p>
+                    </div>
+                    <span className={`stat-val ${m.realized > 0 ? 'up-txt' : m.realized < 0 ? 'down-txt' : ''}`}>
+                      {formatSigned(m.realized)}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </section>
           )}
@@ -1151,8 +1272,11 @@ export function App() {
         <IconInfo size={16} />
         <span>
           이 앱의 기록과 통계·분석은 개인 참고용이며 투자 권유가 아니에요. 실현손익은 같은 종목의
-          평균단가 기준 모의 계산으로 수수료·세금을 반영하지 않아, 실제 손익과 다를 수 있어요.
-          모든 데이터는 이 기기에만 저장돼요.
+          평균단가 기준 모의 계산이라 실제 손익과 다를 수 있어요.
+          {feesOn
+            ? ' 지금은 내정보 탭에 입력한 요율로 수수료·세금을 반영해 계산하고 있어요.'
+            : ' 지금은 수수료·세금을 반영하지 않아요. 내정보 탭에서 요율을 넣으면 반영돼요.'}
+          {' '}모든 데이터는 이 기기에만 저장돼요.
         </span>
       </p>
     </div>

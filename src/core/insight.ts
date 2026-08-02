@@ -3,6 +3,7 @@
  * UI에서는 "습관 분석"으로만 표기한다(과장 표현 금지).
  */
 import { computeStats, sortForCalc, isValidTrade, type Trade } from './journal';
+import { ZERO_FEES, type FeeRates } from './fees';
 
 export interface EmotionStat {
   emotion: string;
@@ -47,9 +48,10 @@ export function hourBand(time: string): string | null {
   return '장 마감 후';
 }
 
-export function analyzeHabits(input: Trade[]): HabitReport {
+export function analyzeHabits(input: Trade[], rates: FeeRates = ZERO_FEES): HabitReport {
   const trades = sortForCalc(input.filter(isValidTrade));
-  const stats = computeStats(trades);
+  // 요율을 함께 넘겨 감정별 실현손익이 다른 통계(총 실현손익·월별)와 같은 기준이 되게 한다.
+  const stats = computeStats(trades, rates);
 
   // 감정 태그별
   const emoMap = new Map<string, EmotionStat>();
@@ -89,7 +91,7 @@ export function analyzeHabits(input: Trade[]): HabitReport {
       if (chaseTag || chasePrice) chaseBuyCount += 1;
       if (avg !== null && t.price < avg) averagingDownCount += 1;
       p.qty += t.qty;
-      p.cost += t.price * t.qty;
+      p.cost += t.price * t.qty; // 물타기 판정은 수수료 제외 순수 단가 기준
       p.lastBuyPrice = t.price;
     } else {
       const sellQty = Math.min(t.qty, p.qty);
