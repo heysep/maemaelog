@@ -32,7 +32,7 @@ input, select, textarea { font-family: inherit; }
 
 .tabs { display: flex; gap: 6px; background: #e3eaf2; border-radius: 14px; padding: 5px; }
 .tab {
-  flex: 1; padding: 11px 0; border-radius: 10px; min-height: 44px;
+  flex: 1; min-width: 0; padding: 11px 0; border-radius: 10px; min-height: 44px;
   font-size: 14px; font-weight: 700; color: var(--sub); text-align: center;
   display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0;
 }
@@ -75,7 +75,7 @@ textarea.field-input { resize: vertical; min-height: 64px; }
 
 .seg { display: flex; gap: 8px; }
 .seg-btn {
-  flex: 1; min-height: 46px; border-radius: 12px; border: 1.5px solid var(--line);
+  flex: 1; min-width: 0; min-height: 46px; border-radius: 12px; border: 1.5px solid var(--line);
   font-size: 15px; font-weight: 700; color: var(--sub); background: #fbfcfe;
 }
 .seg-btn.buy.on { background: #fdecee; border-color: var(--red); color: var(--red); }

@@ -55,6 +55,7 @@ import { ensureIapModule, isIapSupported, purchase } from './iap/purchase';
 import { makeThumbnail, recognizeImage, warmupOcr, type OcrError } from './ocr/ocr';
 import { showRewardedAd } from './ads/rewarded';
 import { BannerAd } from './ads/BannerAd';
+import { bumpInterstitial } from './ads/interstitial';
 import { AD_GROUP_ID, REWARDED_AD_ID } from './ads/config';
 import { EmotionIcon, IconCamera, IconChart, IconHome, IconInfo, IconList, IconPen, IconTrash, IconUser } from './components/icons';
 
@@ -250,6 +251,9 @@ export function App() {
     setReport(null);
     setAiReport(null);
     setTab('home');
+    // 매매 기록 저장이 끝난 뒤(능동 액션) 2회째에 전면광고 1번.
+    // 광고 제거 이용권(noAds)이 있으면 띄우지 않는다. 세션 캡은 모듈에서 관리.
+    if (!noAds) bumpInterstitial(2);
   };
 
   /** 요율 변경 — 기록은 그대로, 통계만 즉시 재계산 */
